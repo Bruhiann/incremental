@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# Saves never belong in the repo. They live in %LOCALAPPDATA%\SEED\, which is
+# per-user, so everyone who clones this gets their own world automatically.
+# These patterns are here only in case someone runs a portable build.
+savegame.json
+savegame_backup.json
+savegame.tmp
+*.sav
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
