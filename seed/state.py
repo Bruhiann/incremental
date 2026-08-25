@@ -82,6 +82,7 @@ def _default_auto() -> dict[str, Any]:
         "research": False,
         "upgrades": False,
         "relics": False,
+        "seed": False,
         "expedition": False,
         "balance": False,
         "prestige_enabled": False,

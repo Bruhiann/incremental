@@ -20,6 +20,7 @@ TARGET_BY_ID = {t.id: t for t in G.TARGETS}
 
 MAX_BUY = 1_000_000          # cap on a single purchase call
 AUTOBUY_CAP = 50             # units a single generator may auto-buy per tick
+AUTOSEED_CAP = 25            # Seed Grid levels bought per tick
 MIN_GROWTH = 1.01
 
 
@@ -639,6 +640,30 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
         for t in available:
             if not buy_research(s, t.id):
                 break
+
+    if s.has_flag("auto_seed") and auto.get("seed"):
+        # Cheapest-next-level first.  Because every node's cost rises
+        # exponentially, this greedy naturally equalises marginal cost across
+        # the grid instead of pouring everything into one node -- and it is
+        # legible, which a value-weighted heuristic would not be.
+        # Seed Points have no other use, so there is nothing to hold back for.
+        bought_any = False
+        for _ in range(AUTOSEED_CAP):
+            best_id, best_cost = None, None
+            for su in G.SEED_GRID:
+                level = int(s.p1_levels.get(su.id, 0))
+                if level >= su.max_level:
+                    continue
+                cost = seed_cost(su, level)
+                if cost > s.p1_sp:
+                    continue
+                if best_cost is None or cost < best_cost:
+                    best_id, best_cost = su.id, cost
+            if best_id is None or not buy_seed(s, best_id, 1):
+                break
+            bought_any = True
+        if bought_any:
+            m = recompute(s)
 
     if s.has_flag("auto_prestige") and auto.get("prestige_enabled"):
         gain = p1_gain(s)

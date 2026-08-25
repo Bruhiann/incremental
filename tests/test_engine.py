@@ -1263,3 +1263,127 @@ class TestBulkShopPurchases(unittest.TestCase):
         E.buy_seed(s2, "sg_global", 1)
         E.recompute(s2)
         self.assertGreater(ten, E.collect_mults(s2).glob)
+
+
+class TestAutoSeedGrid(unittest.TestCase):
+    """Standing Seed Orders: the Seed Grid buys itself, cheapest level first."""
+
+    def _ready(self, sp=1e6, unlocked=True):
+        s = rich()
+        s.p1_count = 3
+        s.p2_count = 1
+        s.p1_sp = N(sp)
+        if unlocked:
+            s.p2_levels["c_autoseed"] = 1
+        s.auto["seed"] = True
+        E.recompute(s)
+        return s
+
+    def test_locked_without_the_coherence_node(self):
+        s = self._ready(unlocked=False)
+        run(s, 1.0)
+        self.assertEqual(s.p1_levels, {})
+        self.assertEqual(s.p1_sp, N(1e6))
+
+    def test_toggle_off_does_nothing(self):
+        s = self._ready()
+        s.auto["seed"] = False
+        run(s, 1.0)
+        self.assertEqual(s.p1_levels, {})
+
+    def test_buys_seed_grid_levels(self):
+        s = self._ready()
+        run(s, 1.0)
+        self.assertTrue(s.p1_levels, "auto-seed bought nothing")
+        self.assertLess(s.p1_sp, N(1e6))
+
+    def test_spends_down_to_unaffordable(self):
+        s = self._ready(sp=5000)
+        run(s, 3.0)
+        cheapest = min(
+            E.seed_cost(su, int(s.p1_levels.get(su.id, 0))).to_float()
+            for su in G.SEED_GRID
+            if int(s.p1_levels.get(su.id, 0)) < su.max_level)
+        self.assertLess(s.p1_sp.to_float(), cheapest)
+
+    def test_currency_never_goes_negative(self):
+        s = self._ready(sp=137)
+        run(s, 3.0)
+        self.assertGreaterEqual(s.p1_sp, ZERO)
+
+    def test_never_exceeds_any_cap(self):
+        s = self._ready(sp=1e12)
+        run(s, 5.0)
+        for su in G.SEED_GRID:
+            self.assertLessEqual(int(s.p1_levels.get(su.id, 0)), su.max_level, su.id)
+
+    def test_it_spreads_across_nodes_rather_than_dumping_into_one(self):
+        """Exponential costs mean cheapest-first equalises marginal cost."""
+        s = self._ready(sp=1e5)
+        run(s, 3.0)
+        self.assertGreater(len(s.p1_levels), 3, s.p1_levels)
+
+    def test_it_buys_the_cheapest_next_level(self):
+        s = self._ready(sp=1)          # affords exactly one 1-SP level
+        run(s, 0.5)
+        self.assertEqual(s.p1_levels, {"sg_global": 1})
+
+    def test_bounded_per_tick(self):
+        s = self._ready(sp=1e30)
+        E.tick(s, 0.1)
+        self.assertLessEqual(sum(s.p1_levels.values()), E.AUTOSEED_CAP)
+
+    def test_purchases_actually_take_effect(self):
+        s = self._ready()
+        before = E.collect_mults(s).glob
+        run(s, 2.0)
+        self.assertGreater(E.collect_mults(s).glob, before)
+
+    def test_it_unlocks_the_one_shot_automation_nodes(self):
+        """Cheapest-first should eventually pick up the flag-granting nodes."""
+        s = self._ready(sp=1e6)
+        run(s, 5.0)
+        E.recompute(s)
+        self.assertTrue(s.has_flag("autobuy"), "never bought Permanent Foreman")
+
+    def test_survives_a_dispersal_and_keeps_spending(self):
+        s = self._ready()
+        run(s, 1.0)
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        before = dict(s.p1_levels)
+        s.p1_sp = s.p1_sp + N(1e6)
+        run(s, 2.0)
+        self.assertNotEqual(s.p1_levels, before)
+
+    def test_it_survives_a_convergence(self):
+        """Each layer's shop survives that layer's own reset: the Seed Grid
+        rides out a Dispersal, and Coherence Nodes ride out a Convergence."""
+        s = self._ready()
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        E.recompute(s)
+        self.assertEqual(s.p2_levels.get("c_autoseed"), 1)
+        self.assertTrue(s.has_flag("auto_seed"))
+        self.assertTrue(s.auto["seed"])
+        self.assertEqual(s.p1_levels, {}, "the Seed Grid itself should be wiped")
+
+    def test_it_refills_the_wiped_seed_grid_after_a_convergence(self):
+        s = self._ready()
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        s.p1_sp = N(1e6)
+        E.recompute(s)
+        run(s, 2.0)
+        self.assertTrue(s.p1_levels, "did not rebuild the Seed Grid")
+
+    def test_pairs_with_auto_dispersal_for_a_hands_off_layer(self):
+        """Together the two nodes close the loop: reset, collect, spend."""
+        s = self._ready(sp=0)
+        s.p2_levels["c_autoprestige"] = 1
+        s.auto["prestige_enabled"] = True
+        E.recompute(s)
+        s.run_life["alloy"] = E.p1_required(s) * N(1e8)
+        run(s, 3.0)
+        self.assertGreater(s.p1_count, 3, "auto-Dispersal never fired")
+        self.assertTrue(s.p1_levels, "the granted Seed Points were never spent")

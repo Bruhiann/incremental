@@ -614,6 +614,11 @@ COHERENCE_GRID: tuple[CohUpg, ...] = (
     CohUpg("c_cross", "Deep Coupling",
            "The Replication-to-Extraction bonus is +25% stronger per level.",
            10, 2.1, 12, Eff(MULT_CROSS, "", 1.25)),
+    CohUpg("c_autoseed", "Standing Seed Orders",
+           "The Seed Grid buys itself, always taking whichever level is "
+           "cheapest next. Together with Standing Dispersal Orders this makes "
+           "the whole Dispersal layer hands-off.", 15, 1.0, 1,
+           Eff(SET_FLAG, "auto_seed")),
     CohUpg("c_autoprestige", "Standing Dispersal Orders",
            "Dispersal can run itself at a threshold you choose.", 4, 1.0, 1,
            Eff(SET_FLAG, "auto_prestige")),

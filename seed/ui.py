@@ -701,6 +701,7 @@ class App:
                  ).pack(fill="x", padx=10, pady=(14, 2))
         self.standing = {}
         for key, label, flag in (("upgrades", "Auto-buy Upgrades (cheapest first)", "auto_upgrade"),
+                                 ("seed", "Auto-buy Seed Grid (cheapest first)", "auto_seed"),
                                  ("relics", "Auto-equip best Relics", "auto_relic"),
                                  ("research", "Auto-Research (cheapest first)", "auto_research"),
                                  ("expedition", "Auto-Expedition (keep bays full)", "auto_expedition"),

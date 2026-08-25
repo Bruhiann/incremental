@@ -94,7 +94,8 @@ closed-form geometric series rather than a loop.
 **Automation** arrives as a reward, never as a given: Fabricator Arms (minute 5)
 → per-machine auto-buy with spending reserves (Foreman research) → auto-Research,
 auto-Upgrades, auto-Relics and auto-Expedition (Seed Grid nodes) → auto-Dispersal
-(a Coherence node). Auto-spending never touches your reserve, whatever it is
+and auto-Seed-Grid (Coherence nodes). The last two together make the whole
+Dispersal layer hands-off: it resets itself and spends the Seed Points itself. Auto-spending never touches your reserve, whatever it is
 buying, and every automatic purchase goes through the same code path you do.
 
 Relics are ranked by `log10(multiplier) x weight`, so scores add the way
@@ -108,7 +109,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 196 tests, headless
+py -m unittest discover -s tests -t .   # 211 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```

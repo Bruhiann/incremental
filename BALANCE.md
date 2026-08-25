@@ -256,3 +256,45 @@ by MAX_BUY per click.
 21 tests cover the maths and both shops, including that bulk purchases charge
 exactly what buying one at a time would, at several growth rates and starting
 levels.
+
+---
+
+# Standing Seed Orders (auto-buying the Seed Grid)
+
+A Coherence node (max level 1) that makes the Seed Grid buy itself, always taking
+whichever level is **cheapest next**. Paired with Standing Dispersal Orders it
+closes the loop on the whole Dispersal layer: reset, collect, spend, repeat.
+
+## Why cheapest-first
+
+Every Seed Grid node's cost rises exponentially, so buying the cheapest next level
+naturally equalises marginal cost across the grid rather than pouring everything
+into one node. Measured over 40 ticks from 1e6 Seed Points it bought **172 levels
+spread across all 18 nodes**, which is the behaviour you want.
+
+It is also *legible*: "buys whatever is cheapest" is something a player can
+predict. A value-weighted heuristic would pick better in theory but would be
+invisible and unpredictable, and Seed Points have no use other than this grid, so
+there is nothing to hold back for.
+
+## Pricing it
+
+Priced at **15 Coherence** — the most expensive node in the shop, next being Deep
+Coupling at 10.
+
+The suggested figure was 30. Measured against actual accumulation, lifetime
+Coherence is **10 after the first Convergence (3h 25m)** and **20 after the second
+(10h)**, so 30 would have meant roughly three Convergences of banking *everything*
+and touching no other node — a 15+ hour wall before the feature existed at all.
+15 lands it around Convergence #2 for a player who prioritises it, while still
+reading as the premium unlock it is. `COHERENCE_GRID` in `gamedata.py` is the one
+line to change if it should be harsher.
+
+## A test-harness bug worth recording
+
+The GUI smoke test began hanging after this was added. It was not the feature:
+`app.tick()` reschedules itself through `after()`, so calling it in a loop piles
+up callbacks the real game never creates — the scheduler only ever has one
+outstanding. The smoke now advances the model with `E.tick` directly and
+exercises `app.tick()` once, separately, to prove the scheduled path still
+advances the loop exactly one step.

@@ -27,6 +27,19 @@ def pump(root, n=6):
         root.update()
 
 
+def step(app, root, n, dt=0.1):
+    """Advance the model n ticks and refresh.
+
+    Deliberately NOT app.tick(): that reschedules itself via after(), so calling
+    it in a loop piles up callbacks that the real game never creates -- the
+    scheduler only ever has one outstanding. app.tick() is exercised separately.
+    """
+    for _ in range(n):
+        E.tick(app.state, dt)
+    app.refresh()
+    pump(root, 2)
+
+
 def main():
     root = tk.Tk()
     app = App(root)
@@ -41,6 +54,11 @@ def main():
     app.refresh()
     pump(root)
     assert s.res["ore"] > ZERO
+    # Exercise the real scheduled tick path once (it reschedules itself).
+    before_ticks = app.ticks
+    app.tick()
+    pump(root)
+    assert app.ticks == before_ticks + 1, "the game loop did not advance"
     app.buy("E1")
     assert s.gens["E1"] > ZERO, "manual buy did nothing"
     print(f"after 40 clicks + 1 buy: ore={fmt(s.res['ore'])} E1={fmt(s.gens['E1'])}")
@@ -61,9 +79,7 @@ def main():
     pump(root)
 
     # Every tab must build and refresh without raising.
-    for _ in range(30):
-        app.tick()
-    pump(root)
+    step(app, root, 30)
     print(f"tabs now: {app.visible_tabs}")
     for tab_id in app.visible_tabs:
         for index, tab in enumerate(G.TABS):
@@ -98,9 +114,7 @@ def main():
     app.reserve_entries["ore"].delete(0, "end")
     app.reserve_entries["ore"].insert(0, "1e12")
     app._reserve_changed("ore")
-    for _ in range(20):
-        app.tick()
-    pump(root)
+    step(app, root, 20)
     assert s.res["ore"] >= N(1e12), "auto-buy spent through the reserve"
     print(f"  auto-buy respected reserve: ore={fmt(s.res['ore'])}")
 
@@ -181,9 +195,7 @@ def main():
     E.recompute(s)
     assert s.has_flag("nanites")
     s.res["nanite"] = N(1e6)
-    for _ in range(20):
-        app.tick()
-    pump(root)
+    step(app, root, 20)
     assert s.res["nanite"] > N(1e6), "nanites did not compound"
     print(f"  nanites compounding: {fmt(s.res['nanite'])}")
 
@@ -201,18 +213,14 @@ def main():
         E.buy(s, gid, 30)
     E.recompute(s)
     before_upg = len(s.upgrades)
-    for _ in range(30):
-        app.tick()
-    pump(root)
+    step(app, root, 30)
     assert len(s.upgrades) > before_upg, "auto-upgrade bought nothing"
     print(f"  auto-upgrades bought {len(s.upgrades) - before_upg} upgrades")
 
     s.artifacts.append({"id": "smoke_best", "name": "Smoke Core",
                         "kind": G.MULT_GLOBAL, "target": "", "value": 25.0,
                         "rarity": "cosmic", "desc": "+2400% to everything."})
-    for _ in range(5):
-        app.tick()
-    pump(root)
+    step(app, root, 5)
     assert "smoke_best" in s.equipped, "auto-relic did not slot the best artifact"
     app.nb.select(app.frames["exploration"])
     app.refresh()
@@ -220,6 +228,30 @@ def main():
     app.optimise_relics()
     pump(root)
     print(f"  best relic auto-slotted; loadout size {len(s.equipped)}")
+
+    # Standing Seed Orders: the Seed Grid buys itself.
+    s.p2_coh = N(1e6)
+    app.coh_amount.set("1")
+    app.refresh(); pump(root)
+    app._buy_coh("c_autoseed")
+    assert s.p2_levels.get("c_autoseed") == 1, "could not buy Standing Seed Orders"
+    E.recompute(s)
+    var, cb, flag = app.standing["seed"]
+    var.set(True); app._standing_changed("seed", var)
+    s.p1_levels.clear()
+    s.p1_sp = N(1e6)
+    step(app, root, 40)
+    assert s.p1_levels, "auto-seed bought nothing"
+    assert s.p1_sp < N(1e6) and s.p1_sp >= ZERO
+    for su in G.SEED_GRID:
+        assert s.p1_levels.get(su.id, 0) <= su.max_level, su.id
+    print(f"  auto-seed bought {sum(s.p1_levels.values())} levels across "
+          f"{len(s.p1_levels)} nodes, {fmt(s.p1_sp)} SP left")
+
+    app.nb.select(app.frames["automation"])
+    app.refresh(); pump(root)
+    assert str(cb.cget("state")) == "normal", "auto-seed checkbox still locked"
+    print("  auto-Seed Grid control enabled")
 
     # Auto-Dispersal became available via the Coherence node.
     app.nb.select(app.frames["automation"])
