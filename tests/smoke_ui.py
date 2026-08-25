@@ -229,6 +229,47 @@ def main():
     pump(root)
     print(f"  best relic auto-slotted; loadout size {len(s.equipped)}")
 
+    # --- The Crucible ---------------------------------------------------
+    s.research.add("r_transmute")
+    E.recompute(s)
+    rng = E._rng(s)
+    for _ in range(40):
+        E._mint_artifact(s, G.RARITY_BY_ID["common"], rng, found=True,
+                         mutation=G.MUTATION_BY_ID["plain"])
+    E.auto_equip(s)
+    app.nb.select(app.frames["exploration"])
+    app.refresh(); pump(root)
+
+    def visible_rows():
+        return sum(1 for w in app.artifact_rows.values() if w["row"].winfo_ismapped())
+
+    rows_before = visible_rows()
+    cap = E.relic_slots(s) + 10
+    assert rows_before <= cap, f"{rows_before} visible rows exceeds the {cap} cap"
+    held_before = len(s.artifacts)
+    protected = set(E.protected_ids(s))
+    app._fuse_all()
+    pump(root)
+    assert len(s.artifacts) < held_before, "fuse-all did nothing"
+    survivors = {a["id"] for a in s.artifacts}
+    assert protected <= survivors, "the Crucible ate a relic in use"
+    assert set(s.equipped) <= survivors, "equipped points at a consumed relic"
+    stale = [a for a in app.artifact_rows if a not in survivors]
+    assert not stale, f"{len(stale)} rows left behind for consumed relics"
+    print(f"  crucible: {held_before} -> {len(s.artifacts)} relics, "
+          f"{visible_rows()} visible rows (cap {cap}), working set intact")
+
+    # A mutated relic shows its mutation and outranks a plain one.
+    star = E._mint_artifact(s, G.RARITY_BY_ID["common"], rng, found=True,
+                            mutation=G.MUTATION_BY_ID["singular"])
+    assert star["name"].startswith("Singular "), star["name"]
+    E.recompute(s); E.auto_equip(s)
+    app.refresh(); pump(root)
+    assert star["id"] in s.equipped, "a Singular relic was not slotted"
+    row = app.artifact_rows[star["id"]]
+    assert row["name"].cget("fg") == G.MUTATION_BY_ID["singular"].colour
+    print(f"  mutation: {star['name']} slotted, value {star['value']:.2f}")
+
     # Standing Seed Orders: the Seed Grid buys itself.
     s.p2_coh = N(1e6)
     app.coh_amount.set("1")

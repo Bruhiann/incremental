@@ -37,8 +37,9 @@ class SaveTest(unittest.TestCase):
         s.milestones.add("m_first_fab")
         s.achievements.add("a_first_ore")
         s.perm_flags.add("found_artifact")
-        s.artifacts.append({"id": "a1", "name": "Fused Ferrous Core", "kind": G.MULT_RES,
-                            "target": "ore", "value": 1.4, "rarity": "rare", "desc": "x"})
+        s.artifacts.append({"id": "a1", "name": "Ancient Fused Ferrous Core",
+                            "kind": G.MULT_RES, "target": "ore", "value": 1.4,
+                            "rarity": "rare", "mutation": "ancient", "desc": "x"})
         s.equipped.append("a1")
         s.p1_sp = N(1234)
         s.p1_levels["sg_global"] = 3
@@ -78,6 +79,7 @@ class TestRoundTrip(SaveTest):
         self.assertEqual(b.achievements, a.achievements)
         self.assertEqual(b.perm_flags, a.perm_flags)
         self.assertEqual(b.equipped, a.equipped)
+        self.assertEqual(b.artifacts[0]["mutation"], "ancient")
         self.assertEqual(b.p1_sp, a.p1_sp)
         self.assertEqual(b.p1_levels, a.p1_levels)
         self.assertEqual(b.p1_count, a.p1_count)
@@ -268,3 +270,34 @@ class TestCloseBehaviour(SaveTest):
         for gid in ("E1", "R1"):
             self.assertEqual(b.gens[gid], a.gens[gid])
             self.assertEqual(b.bought[gid], a.bought[gid])
+
+
+class TestLegacyArtifacts(SaveTest):
+    """Saves written before mutations existed must keep working."""
+
+    def test_relics_without_a_mutation_field_load_and_work(self):
+        s = new_game()
+        s.artifacts = [{"id": f"old{i}", "name": "Old Core", "kind": G.MULT_GLOBAL,
+                        "target": "", "value": 1.5, "rarity": "rare", "desc": ""}
+                       for i in range(12)]
+        s.equipped = ["old0"]
+        self.assertTrue(S.save(s))
+        b, status = S.load()
+        self.assertEqual(status, "loaded")
+        self.assertEqual(len(b.artifacts), 12)
+        E.recompute(b)
+        self.assertEqual(E.mutation_of(b.artifacts[0]).id, "plain")
+        self.assertGreater(E.artifact_score(b, b.artifacts[0]), 0)
+        E.tick(b, 0.1)
+
+    def test_legacy_relics_survive_a_fuse_and_reload(self):
+        s = new_game()
+        s.artifacts = [{"id": f"old{i}", "name": "Old", "kind": G.MULT_RES,
+                        "target": "data", "value": 1.05, "rarity": "common",
+                        "desc": ""} for i in range(12)]
+        s.equipped = []
+        E.recompute(s)
+        E.fuse(s, "common", "max")
+        self.assertTrue(S.save(s))
+        b, _ = S.load()
+        self.assertTrue(any(a["rarity"] == "uncommon" for a in b.artifacts))

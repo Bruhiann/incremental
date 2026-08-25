@@ -298,3 +298,71 @@ up callbacks the real game never creates — the scheduler only ever has one
 outstanding. The smoke now advances the model with `E.tick` directly and
 exercises `app.tick()` once, separately, to prove the scheduled path still
 advances the loop exactly one step.
+
+---
+
+# The Crucible, and relic mutations
+
+## Fusing, not deleting
+
+The ask was a way to clear out old relics: delete them, or fuse them. Deleting
+tidies the list but leaves the actual problem in place — once you hold a decent
+relic, every later Common is dead loot, and the "whoa, I found something" moment
+that RNG exists to create quietly dies. Deleting just hides that. Fusing turns
+the junk into progress, so every drop stays worth reading, and it gives the top
+rarities a route through effort instead of luck alone.
+
+**Three spare relics of one rarity become one of the next rarity up.**
+
+The load-bearing rule is that fusion **never consumes a relic you are using, or
+one the ranking would want to use**. That is enforced inside the selection —
+`fusable()` excludes `equipped | best_loadout` before anything is chosen — rather
+than checked after the fact, and consumption always takes the worst-scoring
+spares first. Five tests exist purely for this property, including one asserting
+that fusing can never lower your multiplier.
+
+A consequence worth knowing: a collection barely larger than your slot count has
+nothing spare, because your whole hoard *is* your working set. That is correct,
+and it is what several of my first test fixtures got wrong.
+
+## Mutations: a second axis
+
+Rarity says how strong; a mutation says how strange. They roll independently.
+
+| Mutation | Weight | Bonus multiplier |
+|---|---|---|
+| (plain) | 62% | x1 |
+| Shiny | 15% | x1.6 |
+| Mutated | 10% | x2.2 |
+| Alien | 7% | x3 |
+| Ancient | 4% | x4.5 |
+| Entangled | 1.6% | x7 |
+| Singular | 0.4% | x12 |
+
+The multiplier scales the relic's **bonus**, not its total, so x1 really is no
+change. Because the axes are independent, a Singular Common outranks a plain
+Rare — which is the point: it keeps low-rarity drops worth looking at instead of
+becoming noise the moment you own an Epic.
+
+Fusion **inherits the best mutation among the relics consumed**, so a mutated
+relic you fuse away is not simply lost. In practice this fires rarely, because
+mutations raise a relic's score and high-scoring relics are consumed last — it is
+a consolation, not a strategy.
+
+Scoring needed no changes: `artifact_score` reads `value`, and mutations are
+already baked into it.
+
+## Save compatibility
+
+Relics written before mutations existed have no `mutation` field. `mutation_of()`
+defaults them to plain, and an unknown id degrades to plain rather than raising.
+Four tests cover loading, scoring, fusing and ticking a legacy save.
+
+## Clutter and cost
+
+The relic list previously rendered one row per artifact forever — and once
+fusion could destroy relics, those rows would have lingered pointing at things
+that no longer existed. The list now shows your slotted relics plus the ten best
+spares, destroys rows for relics that are gone, and reports the rest as a vault
+count. With **800 relics** auto-fusing down to 18, a tick costs **0.30 ms**
+against a 100 ms budget.

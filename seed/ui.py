@@ -431,6 +431,34 @@ class App:
         self.artifact_box = tk.Frame(inner, bg=BG)
         self.artifact_box.pack(fill="x", padx=10, pady=4)
         self.artifact_rows = {}
+        self.vault_note = tk.Label(inner, text="", bg=BG, fg=DIM, font=F, anchor="w")
+        self.vault_note.pack(fill="x", padx=10)
+
+        self.crucible_head = tk.Label(inner, text="The Crucible", bg=BG, fg=ACCENT,
+                                      font=FB, anchor="w")
+        self.crucible_head.pack(fill="x", padx=10, pady=(14, 2))
+        self.crucible_note = tk.Label(
+            inner, text="", bg=BG, fg=DIM, font=F, anchor="w",
+            wraplength=900, justify="left")
+        self.crucible_note.pack(fill="x", padx=10)
+        self.crucible_box = tk.Frame(inner, bg=BG)
+        self.crucible_box.pack(fill="x", padx=10, pady=4)
+        self.crucible_rows = {}
+        for rarity in G.RARITY[:-1]:
+            row = tk.Frame(self.crucible_box, bg=BG2)
+            label = tk.Label(row, text="", bg=BG2, fg=FG, font=F, anchor="w",
+                             padx=10, pady=5)
+            label.pack(side="left", fill="x", expand=True)
+            btn = tk.Button(row, text="", width=14, bg=BG3, fg=FG, font=F,
+                            relief="flat", cursor="hand2",
+                            command=lambda r=rarity.id: self._fuse(r))
+            btn.pack(side="right", padx=8)
+            self.crucible_rows[rarity.id] = {"row": row, "label": label, "btn": btn}
+        self.fuse_all_btn = tk.Button(
+            inner, text="Fuse everything spare", bg=BG3, fg=FG, font=FB,
+            relief="flat", cursor="hand2", padx=12, pady=5,
+            command=self._fuse_all)
+        self.fuse_all_btn.pack(anchor="w", padx=10, pady=(4, 10))
 
     def _launch(self, tid):
         if E.launch_probe(self.state, tid):
@@ -444,6 +472,24 @@ class App:
             self.log("Relics re-slotted: " + (", ".join(names) or "none"), "good")
         else:
             self.log("Your relics are already the best set you own.", "info")
+        self.refresh()
+
+    def _fuse(self, rarity_id):
+        made = E.fuse(self.state, rarity_id, "max")
+        if made:
+            names = ", ".join(a["name"] for a in made[:3])
+            extra = f" (+{len(made) - 3} more)" if len(made) > 3 else ""
+            self.log(f"Fused {len(made) * G.FUSE_COUNT} spare relics into "
+                     f"{len(made)}: {names}{extra}", "major")
+            self.refresh()
+
+    def _fuse_all(self):
+        made = E.fuse_all(self.state)
+        if made:
+            self.log(f"The Crucible produced {made} better relics.", "major")
+        else:
+            self.log("Nothing spare to fuse — you need "
+                     f"{G.FUSE_COUNT} of one rarity you are not using.", "info")
         self.refresh()
 
     def _toggle_equip(self, art_id):
@@ -703,6 +749,7 @@ class App:
         for key, label, flag in (("upgrades", "Auto-buy Upgrades (cheapest first)", "auto_upgrade"),
                                  ("seed", "Auto-buy Seed Grid (cheapest first)", "auto_seed"),
                                  ("relics", "Auto-equip best Relics", "auto_relic"),
+                                 ("fuse", "Auto-fuse spare Relics", "auto_fuse"),
                                  ("research", "Auto-Research (cheapest first)", "auto_research"),
                                  ("expedition", "Auto-Expedition (keep bays full)", "auto_expedition"),
                                  ("balance", "Load Balancer (spend on the bottleneck)", "auto_balance")):
@@ -1087,15 +1134,40 @@ class App:
         best = set(E.best_loadout(s))
         optimal = best == set(s.equipped)
         self.relic_note.config(
-            text=f"{len(s.equipped)}/{relics} slots used · {len(s.artifacts)} found · "
+            text=f"{len(s.equipped)}/{relics} slots used · {len(s.artifacts)} held · "
                  + ("best set slotted" if optimal else "a better set is available"),
             fg=DIM if optimal else GOLD)
-        for art in s.artifacts:
+
+        # Only relics worth acting on get a row.  A long game accumulates
+        # hundreds, and one row each would be unreadable and slow.
+        ranked = sorted(s.artifacts, key=lambda a: E.artifact_score(s, a),
+                        reverse=True)
+        shown, seen = [], set()
+        by_id = {a["id"]: a for a in s.artifacts}
+        for aid in s.equipped:
+            if aid in by_id:
+                shown.append(by_id[aid])
+                seen.add(aid)
+        for art in ranked:
+            if len(shown) >= relics + 10:
+                break
+            if art["id"] not in seen:
+                shown.append(art)
+                seen.add(art["id"])
+
+        # Fusion destroys relics, so rows have to be able to go away again.
+        for aid in list(self.artifact_rows):
+            if aid not in by_id:
+                self.artifact_rows.pop(aid)["row"].destroy()
+            elif aid not in seen and self.artifact_rows[aid]["row"].winfo_ismapped():
+                self.artifact_rows[aid]["row"].pack_forget()
+
+        for art in shown:
             aid = art["id"]
             if aid not in self.artifact_rows:
                 row = tk.Frame(self.artifact_box, bg=BG2)
-                row.pack(fill="x", pady=1)
-                name = tk.Label(row, text="", bg=BG2, font=FB, anchor="w", padx=10, pady=5)
+                name = tk.Label(row, text="", bg=BG2, font=FB, anchor="w",
+                                padx=10, pady=5)
                 name.pack(side="left", fill="x", expand=True)
                 btn = tk.Button(row, text="", width=10, bg=BG3, fg=FG, font=F,
                                 relief="flat", cursor="hand2",
@@ -1103,17 +1175,68 @@ class App:
                 btn.pack(side="right", padx=8)
                 self.artifact_rows[aid] = {"row": row, "name": name, "btn": btn}
             w = self.artifact_rows[aid]
+            if not w["row"].winfo_ismapped():
+                w["row"].pack(fill="x", pady=1)
             rarity = G.RARITY_BY_ID.get(art.get("rarity", "common"))
+            mut = E.mutation_of(art)
+            colour = mut.colour or (rarity.colour if rarity else FG)
             score = E.artifact_score(s, art)
             w["name"].config(
                 text=f"{art['name']}  —  {art.get('desc', '')}   (value {score:.2f})",
-                fg=rarity.colour if rarity else FG)
+                fg=colour)
             equipped = aid in s.equipped
             wanted = aid in best
             w["btn"].config(text="Remove" if equipped else "Slot",
                             fg=GREEN if equipped else (GOLD if wanted else FG),
                             state="normal" if equipped or len(s.equipped) < relics
                             else "disabled")
+        hidden = len(s.artifacts) - len(shown)
+        self.vault_note.config(
+            text=f"...and {hidden} more in the vault" if hidden > 0 else "")
+
+        self._refresh_crucible(s)
+
+    def _refresh_crucible(self, s):
+        fusion = s.has_flag("fusion")
+        widgets = (self.crucible_head, self.crucible_note, self.crucible_box,
+                   self.fuse_all_btn)
+        if not fusion:
+            for widget in widgets:
+                if widget.winfo_ismapped():
+                    widget.pack_forget()
+            return
+        for widget in widgets:
+            if not widget.winfo_ismapped():
+                if widget is self.fuse_all_btn:
+                    widget.pack(anchor="w", padx=10, pady=(4, 10))
+                else:
+                    widget.pack(fill="x", padx=10, pady=2)
+
+        self.crucible_note.config(
+            text=f"Fuse {G.FUSE_COUNT} spare relics of one rarity into one of the "
+                 "next rarity up. The result keeps the strangest mutation that "
+                 "went into it, and nothing you are using is ever consumed.")
+        spare = E.fusable_counts(s)
+        total = 0
+        for rarity in G.RARITY[:-1]:
+            w = self.crucible_rows[rarity.id]
+            count = spare.get(rarity.id, 0)
+            sets = count // G.FUSE_COUNT
+            total += sets
+            if count <= 0:
+                if w["row"].winfo_ismapped():
+                    w["row"].pack_forget()
+                continue
+            if not w["row"].winfo_ismapped():
+                w["row"].pack(fill="x", pady=1)
+            up = E.next_rarity(rarity.id)
+            w["label"].config(text=f"{rarity.name} spare: {count}", fg=rarity.colour)
+            w["btn"].config(text=f"Fuse into {sets}" if sets else "need more",
+                            state="normal" if sets else "disabled",
+                            bg=ACCENT if sets else BG3,
+                            fg="#12151c" if sets else DIM)
+        self.fuse_all_btn.config(state="normal" if total else "disabled",
+                                 fg=FG if total else DIM)
 
     def _refresh_prestige(self):
         s = self.state
@@ -1233,6 +1356,14 @@ class App:
             f"Artifacts found     {st.get('artifacts_found', 0):,}",
             f"Anomalies seen      {st.get('anomalies_seen', 0):,}",
         ]
+        fused = st.get("artifacts_fused", 0)
+        if fused:
+            lines.append(f"Relics fused        {fused:,}")
+        muts = st.get("artifacts_by_mutation") or {}
+        if muts:
+            lines.append("  " + "  ".join(
+                f"{G.MUTATION_BY_ID[k].name} {v}" for k, v in muts.items()
+                if k in G.MUTATION_BY_ID))
         by = st.get("artifacts_by_rarity") or {}
         if by:
             lines.append("  " + "  ".join(

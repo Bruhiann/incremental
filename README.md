@@ -98,6 +98,20 @@ and auto-Seed-Grid (Coherence nodes). The last two together make the whole
 Dispersal layer hands-off: it resets itself and spends the Seed Points itself. Auto-spending never touches your reserve, whatever it is
 buying, and every automatic purchase goes through the same code path you do.
 
+**Relics have two axes.** *Rarity* (Common → Cosmic) says how strong one is;
+a *mutation* (Shiny, Mutated, Alien, Ancient, Entangled, Singular) says how
+strange it is and multiplies the bonus it carries. They roll independently, so a
+Singular Common beats a plain Rare and low-rarity drops stay worth reading.
+
+**The Crucible** fuses three spare relics of one rarity into one of the next
+rarity up, keeping the strangest mutation that went in. It never consumes a relic
+you have slotted, or one the ranking would slot — that guarantee is enforced in
+the selection itself, not checked afterwards. It also solves the long-game
+problem where a Common drop is dead loot once you own something better: now every
+drop is progress toward the next tier, and Cosmic is reachable by effort as well
+as by a 0.1% roll. Unlocked by the Transmutation research; the Automatic Crucible
+Seed Grid node runs it for you.
+
 Relics are ranked by `log10(multiplier) x weight`, so scores add the way
 multipliers compose and the top-scoring set really is the best one. Weights
 reflect what actually moves your bottom line — a global bonus outranks a Data
@@ -109,7 +123,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 211 tests, headless
+py -m unittest discover -s tests -t .   # 257 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```

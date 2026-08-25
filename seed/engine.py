@@ -633,6 +633,11 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
     if s.has_flag("auto_relic") and auto.get("relics"):
         auto_equip(s, m)
 
+    if s.has_flag("auto_fuse") and auto.get("fuse"):
+        if fuse_all(s, m=m):
+            auto_equip(s, m)
+            m = recompute(s)
+
     if s.has_flag("auto_research") and auto.get("research"):
         available = [t for t in G.RESEARCH
                      if t.id not in s.research and check(t.unlock, s)]
@@ -842,8 +847,11 @@ def _resolve_probe(s: GameState, p: dict, rng: random.Random) -> None:
         s.perm_flags.add("ach_deep")
     if rng.random() < chance:
         art = _roll_artifact(s, t, rng)
-        s.notice("artifact", f"{t.name}: recovered {art['name']} "
-                             f"({G.RARITY_BY_ID[art['rarity']].name})")
+        mut = mutation_of(art)
+        tag = G.RARITY_BY_ID[art["rarity"]].name
+        if mut.name:
+            tag = f"{tag} · {mut.name}"
+        s.notice("artifact", f"{t.name}: recovered {art['name']} ({tag})")
     else:
         lump = (s.rates.get("alloy", ZERO) * Num(t.duration * 0.5)).max(Num(50))
         s.res["alloy"] = s.res.get("alloy", ZERO) + lump
@@ -868,28 +876,156 @@ def _roll_artifact(s: GameState, t: G.Target, rng: random.Random) -> dict:
     if [r.id for r in G.RARITY].index(rarity.id) >= 3:
         s.pity = 0
 
+    return _mint_artifact(s, rarity, rng, found=True)
+
+
+def mutation_of(art: dict) -> G.Mutation:
+    """Every relic has one; saves written before mutations existed read plain."""
+    return G.MUTATION_BY_ID.get(art.get("mutation", G.PLAIN_MUTATION),
+                                G.MUTATION_BY_ID[G.PLAIN_MUTATION])
+
+
+def mutation_rank(mutation_id: str) -> int:
+    order = [m.id for m in G.MUTATIONS]
+    return order.index(mutation_id) if mutation_id in order else 0
+
+
+def _roll_mutation(rng: random.Random) -> G.Mutation:
+    return rng.choices(G.MUTATIONS, weights=[m.weight for m in G.MUTATIONS], k=1)[0]
+
+
+def _mint_artifact(s: GameState, rarity: G.Rarity, rng: random.Random,
+                   found: bool, mutation: G.Mutation | None = None) -> dict:
+    """Create one artifact of a given rarity. Shared by drops and fusion."""
     kind = rng.choice(G.ARTIFACT_KINDS)
-    value = 1.0 + kind.per_power * rarity.power
+    mut = mutation or _roll_mutation(rng)
+    # The mutation scales the BONUS, not the total, so x1 really is no change.
+    value = 1.0 + kind.per_power * rarity.power * mut.power
+    name = f"{rng.choice(G.ARTIFACT_PREFIX)} {kind.name}"
+    if mut.name:
+        name = f"{mut.name} {name}"
+    desc = kind.desc.replace("{p}", f"{(value - 1) * 100:.0f}")
+    if mut.desc:
+        desc = f"{desc}  {mut.desc}"
     art = {
         "id": f"art{len(s.artifacts)}_{rng.randrange(1 << 30)}",
-        "name": f"{rng.choice(G.ARTIFACT_PREFIX)} {kind.name}",
+        "name": name,
         "kind": kind.kind,
         "target": kind.target,
         "value": value,
         "rarity": rarity.id,
-        "desc": kind.desc.replace("{p}", f"{(value - 1) * 100:.0f}"),
+        "mutation": mut.id,
+        "desc": desc,
     }
     s.artifacts.append(art)
-    s.stats["artifacts_found"] = s.stats.get("artifacts_found", 0) + 1
+    if found:
+        s.stats["artifacts_found"] = s.stats.get("artifacts_found", 0) + 1
+        s.perm_flags.add("found_artifact")
     by = s.stats.setdefault("artifacts_by_rarity", {})
     by[rarity.id] = by.get(rarity.id, 0) + 1
-    s.perm_flags.add("found_artifact")
+    if mut.id != G.PLAIN_MUTATION:
+        muts = s.stats.setdefault("artifacts_by_mutation", {})
+        muts[mut.id] = muts.get(mut.id, 0) + 1
+        s.perm_flags.add("ach_mutation")
+        if mut.id == "singular":
+            s.perm_flags.add("ach_singular")
     for rid in ("rare", "epic", "legendary", "cosmic"):
         if rarity.id == rid:
             s.perm_flags.add(f"ach_{rid}")
     if len(s.equipped) < relic_slots(s):
         s.equipped.append(art["id"])
     return art
+
+
+# ---------------------------------------------------------------------------
+# The Crucible: fusing spare relics
+# ---------------------------------------------------------------------------
+
+RARITY_ORDER = [r.id for r in G.RARITY]
+
+
+def rarity_rank(rarity_id: str) -> int:
+    return RARITY_ORDER.index(rarity_id) if rarity_id in RARITY_ORDER else -1
+
+
+def next_rarity(rarity_id: str) -> G.Rarity | None:
+    rank = rarity_rank(rarity_id)
+    if rank < 0 or rank + 1 >= len(G.RARITY):
+        return None
+    return G.RARITY[rank + 1]
+
+
+def protected_ids(s: GameState, m: "Mults | None" = None) -> set[str]:
+    """Relics the Crucible must never consume.
+
+    Anything currently slotted, and anything the ranking would slot -- so a
+    relic you are about to want is as safe as one you are already using.  This
+    is enforced in the selection itself rather than checked afterwards.
+    """
+    return set(s.equipped) | set(best_loadout(s, m))
+
+
+def fusable(s: GameState, m: "Mults | None" = None) -> dict[str, list[dict]]:
+    """Spare relics by rarity, worst first, excluding anything protected."""
+    safe = protected_ids(s, m)
+    out: dict[str, list[dict]] = {}
+    for art in s.artifacts:
+        if art.get("id") in safe:
+            continue
+        if next_rarity(art.get("rarity", "")) is None:
+            continue          # top rarity has nowhere to go
+        out.setdefault(art["rarity"], []).append(art)
+    for pool in out.values():
+        pool.sort(key=lambda a: artifact_score(s, a))
+    return out
+
+
+def fusable_counts(s: GameState, m: "Mults | None" = None) -> dict[str, int]:
+    return {rid: len(pool) for rid, pool in fusable(s, m).items()}
+
+
+def fuse(s: GameState, rarity_id: str, times=1, rng: random.Random | None = None,
+         m: "Mults | None" = None) -> list[dict]:
+    """Fuse FUSE_COUNT spare relics into one of the next rarity up."""
+    up = next_rarity(rarity_id)
+    if up is None:
+        return []
+    pool = fusable(s, m).get(rarity_id, [])
+    possible = len(pool) // G.FUSE_COUNT
+    n = possible if times == "max" else min(int(times), possible)
+    if n <= 0:
+        return []
+    rng = rng or _rng(s)
+    batches = [pool[i * G.FUSE_COUNT:(i + 1) * G.FUSE_COUNT] for i in range(n)]
+    consumed = {a["id"] for batch in batches for a in batch}
+    s.artifacts = [a for a in s.artifacts if a.get("id") not in consumed]
+    s.equipped = [i for i in s.equipped if i not in consumed]
+    made = []
+    for batch in batches:
+        # The result keeps the strangest thing that went into it, so a mutated
+        # relic you fuse away is not simply lost.
+        best = max(batch, key=lambda a: mutation_rank(a.get("mutation", G.PLAIN_MUTATION)))
+        made.append(_mint_artifact(s, up, rng, found=False,
+                                   mutation=mutation_of(best)))
+    s.stats["artifacts_fused"] = s.stats.get("artifacts_fused", 0) + n * G.FUSE_COUNT
+    s.perm_flags.add("ach_fused")
+    if up.id == "cosmic":
+        s.perm_flags.add("ach_fused_cosmic")
+    return made
+
+
+def fuse_all(s: GameState, rng: random.Random | None = None,
+             m: "Mults | None" = None) -> int:
+    """Fuse everything fusable, lowest rarity first so gains cascade upward."""
+    total = 0
+    for _ in range(len(G.RARITY)):
+        made = 0
+        for rarity in G.RARITY:
+            made += len(fuse(s, rarity.id, "max", rng, m))
+        total += made
+        if made == 0:
+            break
+    return total
 
 
 def equip(s: GameState, art_id: str) -> bool:

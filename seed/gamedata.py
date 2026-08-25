@@ -351,6 +351,10 @@ RESEARCH: tuple[Tech, ...] = (
          N(3_000), Eff(SET_FLAG, "landfall"),
          Cond(all_of=(Cond(prestige=1), Cond(res="alloy", amount=N(50_000), lifetime=True))),
          major=True),
+    Tech("r_transmute", "Transmutation",
+         "Unlocks the Crucible: melt three relics of one rarity into a single "
+         "relic of the next rarity up.",
+         N(2_500), Eff(SET_FLAG, "fusion"), Cond(flag="exploration"), major=True),
     Tech("r_relic", "Containment Frame", "One more Relic slot.",
          N(5_000), Eff(ADD_SLOT, "relic", 1), Cond(flag="exploration")),
     Tech("r_swarmlogic", "Swarm Logic", "All Replication machines work 100% faster.",
@@ -440,6 +444,9 @@ SEED_GRID: tuple[SeedUpg, ...] = (
     SeedUpg("sg_autoupg", "Standing Upgrade Orders",
             "Upgrades buy themselves, cheapest first.", 90, 1.0, 1,
             Eff(SET_FLAG, "auto_upgrade")),
+    SeedUpg("sg_autofuse", "Automatic Crucible",
+            "Spare relics fuse themselves. Never touches anything you are using.",
+            200, 1.0, 1, Eff(SET_FLAG, "auto_fuse")),
     SeedUpg("sg_autorelic", "Curator Protocol",
             "Your best relics are slotted automatically as you find them.",
             150, 1.0, 1, Eff(SET_FLAG, "auto_relic")),
@@ -701,8 +708,56 @@ RARITY: tuple[Rarity, ...] = (
     Rarity("cosmic", "Cosmic", 0.1, 22.0, "#d04f7f"),
 )
 RARITY_BY_ID = {r.id: r for r in RARITY}
+# The Crucible: fuse N relics of one rarity into one of the next.  Deleting junk
+# would tidy the list but leave the real problem -- once you hold a good relic,
+# every later Common is dead loot and the find stops mattering.  Fusing keeps
+# every drop worth something and gives the top rarities a route through effort
+# rather than luck alone.
+FUSE_COUNT = 3
+
 PITY_ROLLS = 40          # guaranteed Epic+ every N artifact rolls
 PITY_MIN_RARITY = "epic"
+
+
+# A second, independent axis on top of rarity.  Rarity says how strong the relic
+# is; a mutation says how strange it is, and multiplies the bonus it carries.
+# Rolling them separately means a lucky Common can still beat a dull Rare, which
+# keeps low-rarity drops worth reading.
+
+
+@dataclass(frozen=True)
+class Mutation:
+    id: str
+    name: str          # prefixed to the relic name; blank for the plain roll
+    desc: str
+    weight: float
+    power: float       # multiplies the relic's bonus, not its total value
+    colour: str
+
+
+MUTATIONS: tuple[Mutation, ...] = (
+    Mutation("plain", "", "", 62.0, 1.0, ""),
+    Mutation("shiny", "Shiny",
+             "Its surface keeps reflecting light that is not there.",
+             15.0, 1.6, "#6fd8e8"),
+    Mutation("mutated", "Mutated",
+             "Something rewrote it, badly, and it works better for it.",
+             10.0, 2.2, "#68c850"),
+    Mutation("alien", "Alien",
+             "Nothing human machined this.",
+             7.0, 3.0, "#b06fd0"),
+    Mutation("ancient", "Ancient",
+             "Older than the star you found it around.",
+             4.0, 4.5, "#d8a83f"),
+    Mutation("entangled", "Entangled",
+             "Part of it is somewhere else, and that part is helping.",
+             1.6, 7.0, "#e86fa0"),
+    Mutation("singular", "Singular",
+             "There is exactly one of these, and you are holding it.",
+             0.4, 12.0, "#ff6060"),
+)
+MUTATION_BY_ID = {m.id: m for m in MUTATIONS}
+PLAIN_MUTATION = "plain"
 
 
 @dataclass(frozen=True)
@@ -895,6 +950,14 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
                 Cond(res="nanite", amount=N(1e12))),
     Achievement("a_doctrine", "Committed", "Choose all five Doctrines at once.",
                 Cond(flag="ach_doctrines")),
+    Achievement("a_fuse", "Crucible", "Fuse your first relic.", Cond(flag="ach_fused")),
+    Achievement("a_mutation", "Anomalous", "Recover a mutated relic of any kind.",
+                Cond(flag="ach_mutation")),
+    Achievement("a_singular", "One Of One", "Recover a Singular relic.",
+                Cond(flag="ach_singular")),
+    Achievement("a_fuse_cosmic", "Made, Not Found",
+                "Reach a Cosmic relic by fusing rather than finding one.",
+                Cond(flag="ach_fused_cosmic")),
 )
 
 # ---------------------------------------------------------------------------
