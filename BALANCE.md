@@ -232,3 +232,27 @@ replace the state object wholesale and had the same latent problem.
 
 Five engine tests cover preference persistence across both prestige layers,
 including that a toggle without its unlock stays inert and resumes afterwards.
+
+---
+
+# Bulk buying in the prestige shops
+
+The Seed Grid and Coherence Nodes now have the same Buy 1 / 10 / 25 / Max control
+as the Production tab, sharing one closed-form implementation (`bulk_cost` /
+`bulk_affordable`) rather than a purchase loop.
+
+One trap worth recording: several shop nodes are priced **flat**
+(`cost_growth == 1.0`) — the one-shot unlocks like Permanent Foreman and Standing
+Dispersal Orders. The geometric series divides by `growth - 1`, so a flat node
+would have raised ZeroDivisionError the first time anyone clicked Max on it. Flat
+pricing is handled as its own case, and a test asserts it directly.
+
+Both shops share the generator behaviour a player already knows: a bulk button
+disables when the full amount is unaffordable, and Max buys as much as the
+currency allows. Caps are respected in both directions — a capped node never
+overshoots, and an endless node (max_level 0) has no ceiling but is still bounded
+by MAX_BUY per click.
+
+21 tests cover the maths and both shops, including that bulk purchases charge
+exactly what buying one at a time would, at several growth rates and starting
+levels.

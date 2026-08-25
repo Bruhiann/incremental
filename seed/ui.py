@@ -312,6 +312,10 @@ class App:
 
     def _remember_amount(self):
         self.state.settings["buy_amount"] = self.buy_amount.get()
+        if hasattr(self, "seed_amount"):
+            self.state.settings["seed_buy_amount"] = self.seed_amount.get()
+        if hasattr(self, "coh_amount"):
+            self.state.settings["coh_buy_amount"] = self.coh_amount.get()
 
     def manual(self):
         s = self.state
@@ -349,6 +353,27 @@ class App:
             self.tech_cards[t.id] = self._card(
                 inner, t.name, t.desc,
                 lambda tid=t.id: self._buy_research(tid), gold=t.major)
+
+    def _amount_strip(self, parent, var, label):
+        bar = tk.Frame(parent, bg=BG)
+        bar.pack(fill="x", padx=10, pady=(6, 2))
+        tk.Label(bar, text=label, bg=BG, fg=DIM, font=F).pack(side="left", padx=(0, 6))
+        for amount in ("1", "10", "25", "Max"):
+            tk.Radiobutton(bar, text=amount, value=amount, variable=var,
+                           bg=BG, fg=FG, selectcolor=BG3, font=F, indicatoron=False,
+                           width=4, relief="flat", activebackground=ACCENT,
+                           cursor="hand2", command=self._remember_amount
+                           ).pack(side="left", padx=2)
+        return bar
+
+    def _shop_button(self, card, level, cap, cost, currency, k, affordable, colour):
+        """Shared button text for the two prestige shops."""
+        suffix = f"  [{level}{cap}]"
+        label = f"{fmt(cost)} {currency}" + (f"  x{k}" if k > 1 else "") + suffix
+        card["btn"].config(text=label,
+                           state="normal" if affordable else "disabled",
+                           bg=colour if affordable else BG3,
+                           fg="#12151c" if affordable else DIM)
 
     def _card(self, parent, name, desc, command, gold=False):
         row = tk.Frame(parent, bg=BG2, highlightthickness=1,
@@ -447,6 +472,9 @@ class App:
 
         tk.Label(inner, text="Seed Grid — permanent, paid for with Seed Points",
                  bg=BG, fg=ACCENT, font=FB, anchor="w").pack(fill="x", padx=10, pady=(8, 2))
+        self.seed_amount = tk.StringVar(
+            value=self.state.settings.get("seed_buy_amount", "1"))
+        self._amount_strip(inner, self.seed_amount, "Buy")
         self.seed_cards = {}
         for su in G.SEED_GRID:
             self.seed_cards[su.id] = self._card(
@@ -460,7 +488,8 @@ class App:
                      ).pack(fill="x", padx=10, pady=2)
 
     def _buy_seed(self, sid):
-        if E.buy_seed(self.state, sid):
+        amount = self.seed_amount.get()
+        if E.buy_seed(self.state, sid, "max" if amount == "Max" else int(amount)):
             self.refresh()
 
     # -- convergence -----------------------------------------------------
@@ -496,6 +525,9 @@ class App:
 
         tk.Label(inner, text="Coherence Nodes — most of these have no level cap",
                  bg=BG, fg=ACCENT, font=FB, anchor="w").pack(fill="x", padx=10, pady=(14, 2))
+        self.coh_amount = tk.StringVar(
+            value=self.state.settings.get("coh_buy_amount", "1"))
+        self._amount_strip(inner, self.coh_amount, "Buy")
         self.coh_cards = {}
         for cu in G.COHERENCE_GRID:
             self.coh_cards[cu.id] = self._card(
@@ -508,7 +540,8 @@ class App:
             self.refresh()
 
     def _buy_coh(self, cid):
-        if E.buy_coherence(self.state, cid):
+        amount = self.coh_amount.get()
+        if E.buy_coherence(self.state, cid, "max" if amount == "Max" else int(amount)):
             self.refresh()
 
     def do_converge(self):
@@ -562,6 +595,7 @@ class App:
                        bg=VIOLET if chosen else BG2,
                        fg="#12151c" if chosen else (FG if unlocked else DIM))
 
+        amount = self.coh_amount.get()
         for cu in G.COHERENCE_GRID:
             card = self.coh_cards[cu.id]
             level = int(s.p2_levels.get(cu.id, 0))
@@ -569,13 +603,16 @@ class App:
                 card["btn"].config(text=f"Maxed ({level})", state="disabled",
                                    bg=BG3, fg=GREEN)
                 continue
-            cost = E.coherence_cost(cu, level)
-            can = unlocked and s.p2_coh >= cost
+            afford = E.coherence_affordable(s, cu.id)
+            headroom = (cu.max_level - level) if cu.max_level else E.MAX_BUY
+            if amount == "Max":
+                k = max(1, afford)
+            else:
+                k = min(int(amount), headroom)
+            cost = E.coherence_cost(cu, level, k)
+            can = unlocked and afford > 0 and s.p2_coh >= cost
             cap = f"/{cu.max_level}" if cu.max_level else ""
-            card["btn"].config(text=f"{fmt(cost)} Coh  [{level}{cap}]",
-                               state="normal" if can else "disabled",
-                               bg=VIOLET if can else BG3,
-                               fg="#12151c" if can else DIM)
+            self._shop_button(card, level, cap, cost, "Coh", k, can, VIOLET)
 
     def do_prestige(self):
         s = self.state
@@ -1102,6 +1139,7 @@ class App:
                            bg=GOLD if gain > 0 else BG3,
                            fg="#12151c" if gain > 0 else DIM)
 
+        amount = self.seed_amount.get()
         for su in G.SEED_GRID:
             card = self.seed_cards[su.id]
             level = int(s.p1_levels.get(su.id, 0))
@@ -1109,13 +1147,16 @@ class App:
                 card["btn"].config(text=f"Maxed ({level})", state="disabled",
                                    bg=BG3, fg=GREEN)
                 continue
-            cost = E.seed_cost(su, level)
-            can = s.p1_sp >= cost
-            suffix = f"  [{level}/{su.max_level}]" if su.max_level > 1 else ""
-            card["btn"].config(text=f"{fmt(cost)} SP{suffix}",
-                               state="normal" if can else "disabled",
-                               bg=ACCENT if can else BG3,
-                               fg="#12151c" if can else DIM)
+            afford = E.seed_affordable(s, su.id)
+            headroom = su.max_level - level
+            if amount == "Max":
+                k = max(1, afford)
+            else:
+                k = min(int(amount), headroom)
+            cost = E.seed_cost(su, level, k)
+            can = afford > 0 and s.p1_sp >= cost
+            cap = f"/{su.max_level}" if su.max_level > 1 else ""
+            self._shop_button(card, level, cap, cost, "SP", k, can, ACCENT)
 
     def _sync_automation_controls(self):
         """Push state -> widgets.

@@ -117,9 +117,25 @@ def main():
     assert s.gens["E1"] == ZERO and "r_probes" in s.research
     print(f"  dispersed: +{fmt(gain)} SP, machines cleared, research kept")
 
-    # Seed grid purchase.
+    # Seed grid: the buy-amount selector drives bulk purchases.
+    s.p1_sp = N(1e12)          # enough that 1/10/25 are all fully affordable
+    for amount, expect in (("1", 1), ("10", 11), ("25", 36)):
+        app.seed_amount.set(amount)
+        app.refresh(); pump(root)
+        app._buy_seed("sg_global")
+        assert s.p1_levels["sg_global"] == expect, (amount, s.p1_levels["sg_global"])
+    app.seed_amount.set("Max")
+    app.refresh(); pump(root)
     app._buy_seed("sg_global")
-    print(f"  seed grid sg_global level={s.p1_levels.get('sg_global')}")
+    assert E.seed_affordable(s, "sg_global") == 0, "Max left something affordable"
+    assert s.p1_sp >= ZERO
+    print(f"  seed grid 1/10/25/Max -> sg_global level={s.p1_levels['sg_global']}")
+
+    # A capped node must never overshoot its cap.
+    app._buy_seed("sg_cheap")
+    assert s.p1_levels["sg_cheap"] <= G.SEED_BY_ID["sg_cheap"].max_level
+    print(f"  capped node respected cap: sg_cheap={s.p1_levels['sg_cheap']}"
+          f"/{G.SEED_BY_ID['sg_cheap'].max_level}")
 
     # --- Convergence (prestige layer 2) --------------------------------
     s.p1_sp_life = E.p2_required(s) * N(1e4)
@@ -143,12 +159,23 @@ def main():
     app._choose_doctrine("d1_forge")          # same row replaces
     app._choose_doctrine("d3_mind")
     assert s.doctrines == {1: "d1_forge", 3: "d3_mind"}, s.doctrines
-    s.p2_coh = N(1e9)
+    s.p2_coh = N(1e12)
+    for amount, expect in (("1", 1), ("10", 11), ("25", 36)):
+        app.coh_amount.set(amount)
+        app.refresh(); pump(root)
+        app._buy_coh("c_global")
+        assert s.p2_levels["c_global"] == expect, (amount, s.p2_levels["c_global"])
+    app.coh_amount.set("Max")
+    app.refresh(); pump(root)
     app._buy_coh("c_global")
+    assert E.coherence_affordable(s, "c_global") == 0
+    assert s.p2_coh >= ZERO
+    s.p2_coh = N(1e12)
     app._buy_coh("c_autoprestige")
-    app.refresh()
-    pump(root)
-    print(f"  doctrines={s.doctrines} coherence nodes={s.p2_levels}")
+    assert s.p2_levels["c_autoprestige"] == 1, "flat-priced node overshot its cap"
+    app.refresh(); pump(root)
+    print(f"  coherence 1/10/25/Max -> c_global level={s.p2_levels['c_global']}")
+    print(f"  doctrines={s.doctrines} nodes={sorted(s.p2_levels)}")
 
     # Nanites should now exist and compound.
     E.recompute(s)

@@ -367,23 +367,78 @@ def buy_research(s: GameState, tid: str) -> bool:
     return True
 
 
-def seed_cost(su: G.SeedUpg, level: int) -> Num:
-    return Num(su.base_cost) * (Num(su.cost_growth) ** level)
+FLAT = 1.0 + 1e-12          # anything at or below this has no cost growth
 
 
-def buy_seed(s: GameState, sid: str) -> bool:
+def bulk_cost(base: float, growth: float, level: int, k: int) -> Num:
+    """Cost of buying `k` levels starting from `level`. Closed form, no loop.
+
+    Several shop nodes are priced flat (cost_growth == 1.0), which the geometric
+    series cannot express -- it divides by growth - 1 -- so that case is handled
+    separately rather than left to produce a ZeroDivisionError.
+    """
+    first = Num(base) * (Num(growth) ** level)
+    if k <= 1:
+        return first
+    if growth <= FLAT:
+        return first * Num(k)
+    return first * ((Num(growth) ** k) - ONE) / Num(growth - 1.0)
+
+
+def bulk_affordable(base: float, growth: float, level: int, cash: Num) -> int:
+    """How many levels `cash` buys, starting from `level`."""
+    first = Num(base) * (Num(growth) ** level)
+    if first <= 0 or cash < first:
+        return 0
+    if growth <= FLAT:
+        return max(0, min(MAX_BUY, int((cash / first).to_float())))
+    ratio_log = cash.log10() - first.log10()
+    if ratio_log > 300:
+        return MAX_BUY
+    ratio = 10.0**ratio_log
+    k = math.floor(math.log(1.0 + ratio * (growth - 1.0)) / math.log(growth))
+    return max(0, min(MAX_BUY, int(k)))
+
+
+def _remaining_levels(level: int, max_level: int) -> int:
+    """Levels left before the cap. max_level 0 means endless."""
+    return MAX_BUY if not max_level else max(0, max_level - level)
+
+
+def seed_cost(su: G.SeedUpg, level: int, k: int = 1) -> Num:
+    return bulk_cost(su.base_cost, su.cost_growth, level, k)
+
+
+def seed_affordable(s: GameState, sid: str) -> int:
     su = G.SEED_BY_ID.get(sid)
     if not su:
-        return False
+        return 0
     level = int(s.p1_levels.get(sid, 0))
-    if level >= su.max_level:
-        return False
-    cost = seed_cost(su, level)
-    if s.p1_sp < cost:
-        return False
+    return min(bulk_affordable(su.base_cost, su.cost_growth, level, s.p1_sp),
+               _remaining_levels(level, su.max_level))
+
+
+def buy_seed(s: GameState, sid: str, amount=1) -> int:
+    """Single mutation path for the Seed Grid. Returns levels actually bought."""
+    su = G.SEED_BY_ID.get(sid)
+    if not su:
+        return 0
+    level = int(s.p1_levels.get(sid, 0))
+    afford = seed_affordable(s, sid)
+    k = afford if amount == "max" else min(int(amount), afford)
+    if k <= 0:
+        return 0
+    cost = seed_cost(su, level, k)
+    if cost > s.p1_sp:                      # belt-and-braces against rounding
+        k -= 1
+        if k <= 0:
+            return 0
+        cost = seed_cost(su, level, k)
+        if cost > s.p1_sp:
+            return 0
     s.p1_sp = (s.p1_sp - cost).clamp_min(0)
-    s.p1_levels[sid] = level + 1
-    return True
+    s.p1_levels[sid] = level + k
+    return k
 
 
 # ---------------------------------------------------------------------------
@@ -921,23 +976,40 @@ def p2_visible(s: GameState) -> bool:
     return s.has_flag("see_convergence")
 
 
-def buy_coherence(s: GameState, cid: str) -> bool:
+def coherence_cost(cu: G.CohUpg, level: int, k: int = 1) -> Num:
+    return bulk_cost(cu.base_cost, cu.cost_growth, level, k)
+
+
+def coherence_affordable(s: GameState, cid: str) -> int:
     cu = G.COH_BY_ID.get(cid)
     if not cu:
-        return False
+        return 0
     level = int(s.p2_levels.get(cid, 0))
-    if cu.max_level and level >= cu.max_level:
-        return False
-    cost = coherence_cost(cu, level)
-    if s.p2_coh < cost:
-        return False
+    return min(bulk_affordable(cu.base_cost, cu.cost_growth, level, s.p2_coh),
+               _remaining_levels(level, cu.max_level))
+
+
+def buy_coherence(s: GameState, cid: str, amount=1) -> int:
+    """Single mutation path for Coherence Nodes. Returns levels bought."""
+    cu = G.COH_BY_ID.get(cid)
+    if not cu:
+        return 0
+    level = int(s.p2_levels.get(cid, 0))
+    afford = coherence_affordable(s, cid)
+    k = afford if amount == "max" else min(int(amount), afford)
+    if k <= 0:
+        return 0
+    cost = coherence_cost(cu, level, k)
+    if cost > s.p2_coh:
+        k -= 1
+        if k <= 0:
+            return 0
+        cost = coherence_cost(cu, level, k)
+        if cost > s.p2_coh:
+            return 0
     s.p2_coh = (s.p2_coh - cost).clamp_min(0)
-    s.p2_levels[cid] = level + 1
-    return True
-
-
-def coherence_cost(cu: G.CohUpg, level: int) -> Num:
-    return Num(cu.base_cost) * (Num(cu.cost_growth) ** level)
+    s.p2_levels[cid] = level + k
+    return k
 
 
 def choose_doctrine(s: GameState, did: str) -> bool:

@@ -1116,3 +1116,150 @@ class TestWorldSeed(unittest.TestCase):
         first = s.rng_seed
         run(s, 2.0, rng=E._rng(s))
         self.assertEqual(s.rng_seed, first)
+
+
+class TestBulkShopPurchases(unittest.TestCase):
+    """Buy 1 / 10 / 25 / Max for the Dispersal and Convergence shops."""
+
+    def _sp(self, amount=1e12):
+        s = rich()
+        s.p1_sp = N(amount)
+        return s
+
+    def _coh(self, amount=1e12):
+        s = rich()
+        s.p2_count = 1
+        s.p2_coh = N(amount)
+        return s
+
+    # -- the maths ----------------------------------------------------
+    def test_bulk_cost_matches_buying_one_at_a_time(self):
+        for growth in (1.0, 1.6, 2.5, 3.0):
+            for start in (0, 7):
+                stepwise = ZERO
+                for i in range(12):
+                    stepwise = stepwise + E.bulk_cost(5.0, growth, start + i, 1)
+                self.assertAlmostEqual(
+                    E.bulk_cost(5.0, growth, start, 12).to_float(),
+                    stepwise.to_float(), places=4,
+                    msg=f"growth={growth} start={start}")
+
+    def test_flat_priced_nodes_do_not_divide_by_zero(self):
+        """cost_growth == 1.0 breaks the geometric series if unhandled."""
+        self.assertEqual(E.bulk_cost(20.0, 1.0, 0, 5).to_float(), 100.0)
+        self.assertEqual(E.bulk_affordable(20.0, 1.0, 0, N(100)), 5)
+
+    def test_affordable_is_exact(self):
+        for growth in (1.0, 1.7, 2.2):
+            k = E.bulk_affordable(3.0, growth, 0, N(1000))
+            self.assertLessEqual(E.bulk_cost(3.0, growth, 0, k).to_float(), 1000.0)
+            self.assertGreater(E.bulk_cost(3.0, growth, 0, k + 1).to_float(), 1000.0)
+
+    def test_affordable_is_zero_when_broke(self):
+        self.assertEqual(E.bulk_affordable(100.0, 2.0, 0, N(99)), 0)
+
+    def test_bulk_is_fast_at_absurd_wealth(self):
+        import time as _t
+        t0 = _t.perf_counter()
+        k = E.bulk_affordable(1.0, 1.6, 0, Num(1, 400))
+        self.assertLess(_t.perf_counter() - t0, 0.25)
+        self.assertLessEqual(k, E.MAX_BUY)
+
+    # -- seed grid ----------------------------------------------------
+    def test_seed_buy_amounts(self):
+        for amount in (1, 10, 25):
+            s = self._sp()
+            self.assertEqual(E.buy_seed(s, "sg_global", amount), amount)
+            self.assertEqual(s.p1_levels["sg_global"], amount)
+
+    def test_seed_buy_max_stops_at_unaffordable(self):
+        s = self._sp(1000)
+        k = E.buy_seed(s, "sg_global", "max")
+        self.assertGreater(k, 0)
+        self.assertEqual(E.seed_affordable(s, "sg_global"), 0)
+        self.assertGreaterEqual(s.p1_sp, ZERO)
+
+    def test_seed_bulk_charges_the_same_as_repeated_singles(self):
+        a, b = self._sp(), self._sp()
+        E.buy_seed(a, "sg_global", 15)
+        for _ in range(15):
+            E.buy_seed(b, "sg_global", 1)
+        self.assertEqual(a.p1_levels["sg_global"], b.p1_levels["sg_global"])
+        self.assertAlmostEqual(a.p1_sp.log10(), b.p1_sp.log10(), places=6)
+
+    def test_seed_never_exceeds_max_level(self):
+        s = self._sp()
+        su = G.SEED_BY_ID["sg_cheap"]
+        E.buy_seed(s, "sg_cheap", 999)
+        self.assertEqual(s.p1_levels["sg_cheap"], su.max_level)
+        self.assertEqual(E.buy_seed(s, "sg_cheap", "max"), 0)
+
+    def test_seed_single_level_node_buys_once(self):
+        s = self._sp()
+        self.assertEqual(E.buy_seed(s, "sg_autobuy", "max"), 1)
+        self.assertEqual(E.buy_seed(s, "sg_autobuy", 10), 0)
+
+    def test_seed_partial_buy_when_short(self):
+        s = self._sp()
+        s.p1_sp = E.seed_cost(G.SEED_BY_ID["sg_global"], 0, 3)
+        self.assertEqual(E.buy_seed(s, "sg_global", 25), 3)
+
+    def test_seed_broke_buys_nothing(self):
+        s = self._sp(0)
+        self.assertEqual(E.buy_seed(s, "sg_global", "max"), 0)
+        self.assertEqual(s.p1_levels.get("sg_global", 0), 0)
+
+    def test_seed_currency_never_negative(self):
+        s = self._sp(37)
+        E.buy_seed(s, "sg_global", "max")
+        self.assertGreaterEqual(s.p1_sp, ZERO)
+
+    def test_seed_unknown_id_is_safe(self):
+        s = self._sp()
+        self.assertEqual(E.buy_seed(s, "not_a_node", "max"), 0)
+
+    # -- coherence nodes ----------------------------------------------
+    def test_coherence_buy_amounts(self):
+        for amount in (1, 10, 25):
+            s = self._coh()
+            self.assertEqual(E.buy_coherence(s, "c_global", amount), amount)
+            self.assertEqual(s.p2_levels["c_global"], amount)
+
+    def test_coherence_endless_node_has_no_cap(self):
+        s = self._coh(1e30)
+        k = E.buy_coherence(s, "c_global", "max")
+        self.assertGreater(k, 25)
+        self.assertEqual(G.COH_BY_ID["c_global"].max_level, 0)
+
+    def test_coherence_capped_node_stops_at_cap(self):
+        s = self._coh(1e30)
+        cu = G.COH_BY_ID["c_cheap"]
+        E.buy_coherence(s, "c_cheap", "max")
+        self.assertEqual(s.p2_levels["c_cheap"], cu.max_level)
+
+    def test_coherence_bulk_matches_singles(self):
+        a, b = self._coh(), self._coh()
+        E.buy_coherence(a, "c_rep", 12)
+        for _ in range(12):
+            E.buy_coherence(b, "c_rep", 1)
+        self.assertEqual(a.p2_levels["c_rep"], b.p2_levels["c_rep"])
+        self.assertAlmostEqual(a.p2_coh.log10(), b.p2_coh.log10(), places=6)
+
+    def test_coherence_currency_never_negative(self):
+        s = self._coh(11)
+        E.buy_coherence(s, "c_global", "max")
+        self.assertGreaterEqual(s.p2_coh, ZERO)
+
+    def test_coherence_broke_buys_nothing(self):
+        s = self._coh(0)
+        self.assertEqual(E.buy_coherence(s, "c_global", "max"), 0)
+
+    def test_bulk_effects_actually_stack(self):
+        s = self._sp()
+        E.buy_seed(s, "sg_global", 10)
+        E.recompute(s)
+        ten = E.collect_mults(s).glob
+        s2 = self._sp()
+        E.buy_seed(s2, "sg_global", 1)
+        E.recompute(s2)
+        self.assertGreater(ten, E.collect_mults(s2).glob)

@@ -87,6 +87,10 @@ number runs away but the balance does not), **Doctrines** (five rows of three
 mutually exclusive branches, free and re-picked at every Convergence so no choice
 is a permanent regret), **auto-Dispersal**, and an endless Coherence shop.
 
+Every shop — machines, the Seed Grid and the Coherence Nodes — has the same
+**Buy 1 / 10 / 25 / Max** control, and all of them price bulk purchases with a
+closed-form geometric series rather than a loop.
+
 **Automation** arrives as a reward, never as a given: Fabricator Arms (minute 5)
 → per-machine auto-buy with spending reserves (Foreman research) → auto-Research,
 auto-Upgrades, auto-Relics and auto-Expedition (Seed Grid nodes) → auto-Dispersal
@@ -104,7 +108,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 167 tests, headless
+py -m unittest discover -s tests -t .   # 196 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```
