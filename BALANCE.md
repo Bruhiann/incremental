@@ -532,3 +532,44 @@ widget on a tab the player is not currently looking at. Rows on a background tab
 were therefore re-packed on every refresh, reshuffling themselves. All 21 uses
 now go through `is_packed()`, which asks `winfo_manager()` — "is this managed by
 pack right now" — which is what the logic always meant.
+
+---
+
+# Buy Max claimed a million and bought nothing
+
+Reported as "the auto purchasing isn't buying fast enough". The screenshot showed
+a `Buy x1000000` button on an Orbital Refinery, which was the tell.
+
+`max_affordable` short-circuited to `MAX_BUY` whenever cash was more than 300
+orders of magnitude past the next unit's price — a shortcut added because a float
+cannot hold `10**5000`. It is simply wrong: with 1e5000 Ore and 1.14 cost growth
+the true answer is **87,796 levels, not 1,000,000**, and a million costs
+`6.09e56908`.
+
+The consequence was worse than an overstated label. `buy()` recomputes the price
+for the count it was handed, finds it unaffordable, decrements by one, finds that
+unaffordable too, and **returns zero**. So Buy Max offered a million and purchased
+nothing, and auto-buy silently stalled on every machine the player was rich
+enough to trip the shortcut on — which is exactly the "not buying fast enough"
+that was reported.
+
+*Fix:* `_levels_from_ratio()` solves for k in log space, so the large branch is
+exact rather than a guess. On the reporting save Buy Max went from "1,000,000,
+bought 0" to "16,565, bought 16,565".
+
+Two more found while fixing it:
+
+- **`bulk_affordable` raised OverflowError** on a flat-priced shop node with an
+  astronomical bank: `int(inf)`. That would have crashed the game outright on a
+  Max click. It now decides in log space before converting.
+- **Auto-buy's flat 50-per-tick allowance** was glacial once affordability ran to
+  five figures. It is now a share of what you could buy outright
+  (`AUTOBUY_FRACTION`, floored at the old 50), which keeps up with wealth while
+  still leaving budget for the other machines in the same tick.
+
+# Standing Coherence Orders
+
+An Overwrite node (30 Charges, max level 1) that buys Coherence Nodes on its own,
+cheapest level first — the Convergence layer's equivalent of Standing Seed
+Orders. With it, Standing Convergence Orders and Standing Dispersal Orders, the
+whole prestige stack below Overwrite runs itself.

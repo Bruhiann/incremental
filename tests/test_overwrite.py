@@ -334,3 +334,139 @@ class TestAutoConverge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAutoCoherence(unittest.TestCase):
+    """Standing Coherence Orders: the Convergence shop buys itself."""
+
+    def _ready(self, coh=1e6, unlocked=True):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p2_coh = N(coh)
+        if unlocked:
+            s.p3_levels["ow_autocoh"] = 1
+        s.auto["coherence"] = True
+        E.recompute(s)
+        return s
+
+    def test_locked_without_the_node(self):
+        s = self._ready(unlocked=False)
+        run(s, 1.0)
+        self.assertEqual(s.p2_levels, {})
+
+    def test_toggle_off_does_nothing(self):
+        s = self._ready()
+        s.auto["coherence"] = False
+        run(s, 1.0)
+        self.assertEqual(s.p2_levels, {})
+
+    def test_it_buys_nodes(self):
+        s = self._ready()
+        run(s, 1.0)
+        self.assertTrue(s.p2_levels, "auto-coherence bought nothing")
+        self.assertLess(s.p2_coh, N(1e6))
+
+    def test_it_spends_down_to_unaffordable(self):
+        s = self._ready(coh=500)
+        run(s, 3.0)
+        cheapest = min(
+            E.coherence_cost(cu, int(s.p2_levels.get(cu.id, 0))).to_float()
+            for cu in G.COHERENCE_GRID
+            if not cu.max_level or s.p2_levels.get(cu.id, 0) < cu.max_level)
+        self.assertLess(s.p2_coh.to_float(), cheapest)
+
+    def test_currency_never_goes_negative(self):
+        s = self._ready(coh=37)
+        run(s, 3.0)
+        self.assertGreaterEqual(s.p2_coh, ZERO)
+
+    def test_it_respects_caps(self):
+        s = self._ready(coh=1e12)
+        run(s, 3.0)
+        for cu in G.COHERENCE_GRID:
+            if cu.max_level:
+                self.assertLessEqual(s.p2_levels.get(cu.id, 0), cu.max_level, cu.id)
+
+    def test_it_spreads_across_nodes(self):
+        s = self._ready(coh=1e5)
+        run(s, 3.0)
+        self.assertGreater(len(s.p2_levels), 3, s.p2_levels)
+
+    def test_it_settles_instead_of_churning(self):
+        s = self._ready(coh=1000)
+        run(s, 2.0)
+        settled = dict(s.p2_levels)
+        run(s, 2.0)
+        self.assertEqual(s.p2_levels, settled)
+
+    def test_purchases_take_effect(self):
+        s = self._ready()
+        before = E.collect_mults(s).glob
+        run(s, 2.0)
+        self.assertGreater(E.collect_mults(s).glob, before)
+
+    def test_it_survives_a_convergence(self):
+        s = self._ready()
+        run(s, 1.0)
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        s.p2_coh = N(1e6)
+        run(s, 1.0)
+        self.assertTrue(s.p2_levels)
+
+
+class TestAutoBuyKeepsUp(unittest.TestCase):
+    """A flat 50-per-tick allowance crawls once you can afford a million."""
+
+    def _rich_autobuyer(self, ore=None):
+        # Costs grow at 1.11, so affordability is logarithmic in wealth: it
+        # takes an absurd bank to reach the regime the player reported, where
+        # the buy button reads "x1000000".
+        s = new_game()
+        bank = Num(1, 5000) if ore is None else N(ore)
+        s.res["ore"] = bank
+        s.run_life["ore"] = bank
+        s.p1_levels["sg_autobuy"] = 1
+        s.auto["enabled"] = True
+        E.recompute(s)
+        for g in G.GENERATORS:
+            s.auto["gens"][g.id] = True
+        return s
+
+    def test_allowance_scales_with_what_you_can_afford(self):
+        s = self._rich_autobuyer()
+        m = E.recompute(s)
+        afford = E.max_affordable(s, "E1", m)
+        allowance = E._autobuy_amount(s, "E1", m)
+        self.assertGreater(afford, 10_000, "test bank is not large enough")
+        self.assertGreater(allowance, E.AUTOBUY_CAP * 100,
+                           "auto-buy is still crawling at the flat floor")
+        self.assertAlmostEqual(allowance / afford, E.AUTOBUY_FRACTION, places=3)
+
+    def test_small_bank_still_uses_the_floor(self):
+        s = self._rich_autobuyer(ore=200)
+        m = E.recompute(s)
+        self.assertEqual(E._autobuy_amount(s, "E1", m), E.AUTOBUY_CAP)
+
+    def test_allowance_is_bounded(self):
+        s = self._rich_autobuyer()
+        m = E.recompute(s)
+        self.assertLessEqual(E._autobuy_amount(s, "E1", m), E.MAX_BUY)
+
+    def test_it_buys_far_more_per_tick_than_the_old_floor(self):
+        s = self._rich_autobuyer()
+        E.tick(s, 0.1)
+        self.assertGreater(s.bought["E1"].to_float(), E.AUTOBUY_CAP * 10)
+
+    def test_it_still_leaves_budget_for_other_machines(self):
+        s = self._rich_autobuyer()
+        run(s, 1.0)
+        bought = [g.id for g in G.GENERATORS
+                  if g.cost_res == "ore" and s.bought.get(g.id, ZERO) > 0]
+        self.assertGreater(len(bought), 3,
+                           "the first machine swallowed the whole budget")
+
+    def test_it_never_overspends(self):
+        s = self._rich_autobuyer(ore=1e6)
+        run(s, 2.0)
+        self.assertGreaterEqual(s.res["ore"], ZERO)

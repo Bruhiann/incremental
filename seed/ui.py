@@ -927,6 +927,7 @@ class App:
         self.standing = {}
         for key, label, flag in (("upgrades", "Auto-buy Upgrades (cheapest first)", "auto_upgrade"),
                                  ("seed", "Auto-buy Seed Grid (cheapest first)", "auto_seed"),
+                                 ("coherence", "Auto-buy Coherence Nodes (cheapest first)", "auto_coh"),
                                  ("relics", "Auto-equip best Relics", "auto_relic"),
                                  ("fuse", "Auto-fuse spare Relics", "auto_fuse"),
                                  ("research", "Auto-Research (cheapest first)", "auto_research"),

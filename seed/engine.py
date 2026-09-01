@@ -19,7 +19,11 @@ ACH_BY_ID = {a.id: a for a in G.ACHIEVEMENTS}
 TARGET_BY_ID = {t.id: t for t in G.TARGETS}
 
 MAX_BUY = 1_000_000          # cap on a single purchase call
-AUTOBUY_CAP = 50             # units a single generator may auto-buy per tick
+AUTOBUY_CAP = 50             # floor on units a generator may auto-buy per tick
+# ...but a flat floor is glacial once you can afford a million levels a tick, so
+# the real allowance is a share of what you could buy outright. Taking a share
+# rather than everything still leaves budget for the other machines this tick.
+AUTOBUY_FRACTION = 0.10
 AUTOSEED_CAP = 25            # Seed Grid levels bought per tick
 MIN_GROWTH = 1.01
 
@@ -286,6 +290,29 @@ def recompute(s: GameState) -> Mults:
 # Cost and purchasing
 # ---------------------------------------------------------------------------
 
+def _levels_from_ratio(ratio_log: float, growth: float) -> int:
+    """Levels affordable when you hold 10**ratio_log times the next unit's cost.
+
+    Solves cash >= base*(g**k - 1)/(g - 1) for k.  The large branch matters: a
+    float cannot hold 10**5000, and short-circuiting to MAX_BUY there was wrong
+    in a way that silently broke buying entirely -- max_affordable would claim a
+    million, buy() would price a million, find it unaffordable, and purchase
+    nothing at all.  For a large ratio the +1 is negligible, so the whole thing
+    can be done in logs.
+    """
+    if ratio_log < 0:
+        return 0
+    log_g = math.log10(growth)
+    if log_g <= 0:
+        return MAX_BUY
+    if ratio_log > 280:
+        k = math.floor((ratio_log + math.log10(growth - 1.0)) / log_g)
+    else:
+        ratio = 10.0**ratio_log
+        k = math.floor(math.log(1.0 + ratio * (growth - 1.0)) / math.log(growth))
+    return max(0, min(MAX_BUY, int(k)))
+
+
 def growth_of(s: GameState, g: G.Gen, m: Mults | None = None) -> float:
     m = m or recompute(s)
     delta = m.growth.get("*", 0.0) + m.growth.get(g.id, 0.0) + m.growth.get(g.ladder, 0.0)
@@ -317,11 +344,7 @@ def max_affordable(s: GameState, gid: str, m: Mults | None = None) -> int:
     ratio_log = cash.log10() - first.log10()
     if ratio_log < -12:
         return 0
-    if ratio_log > 300:
-        return MAX_BUY
-    ratio = 10.0**ratio_log
-    k = math.floor(math.log(1.0 + ratio * (gr - 1.0)) / math.log(gr))
-    return max(0, min(MAX_BUY, int(k)))
+    return _levels_from_ratio(ratio_log, gr)
 
 
 def buy(s: GameState, gid: str, amount, m: Mults | None = None) -> int:
@@ -405,13 +428,13 @@ def bulk_affordable(base: float, growth: float, level: int, cash: Num) -> int:
     if first <= 0 or cash < first:
         return 0
     if growth <= FLAT:
-        return max(0, min(MAX_BUY, int((cash / first).to_float())))
-    ratio_log = cash.log10() - first.log10()
-    if ratio_log > 300:
-        return MAX_BUY
-    ratio = 10.0**ratio_log
-    k = math.floor(math.log(1.0 + ratio * (growth - 1.0)) / math.log(growth))
-    return max(0, min(MAX_BUY, int(k)))
+        # int(inf) raises, and a flat-priced node plus an astronomical bank
+        # reaches infinity easily. Decide in log space first.
+        ratio = cash / first
+        if ratio.log10() > 12:
+            return MAX_BUY
+        return max(0, min(MAX_BUY, int(ratio.to_float())))
+    return _levels_from_ratio(cash.log10() - first.log10(), growth)
 
 
 def _remaining_levels(level: int, max_level: int) -> int:
@@ -612,6 +635,18 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
 # Automation
 # ---------------------------------------------------------------------------
 
+def _autobuy_amount(s: GameState, gid: str, m: Mults) -> int:
+    """How many units auto-buy may take this tick.
+
+    Scales with what you could actually afford, so it does not crawl at fifty a
+    tick while you are sitting on enough for a million.
+    """
+    afford = max_affordable(s, gid, m)
+    if afford <= AUTOBUY_CAP:
+        return AUTOBUY_CAP
+    return max(AUTOBUY_CAP, min(MAX_BUY, int(afford * AUTOBUY_FRACTION)))
+
+
 def _automate(s: GameState, dt: float, m: Mults) -> None:
     auto = s.auto
     if s.has_flag("autobuy") and auto.get("enabled"):
@@ -629,11 +664,11 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
                 if stash <= keep:
                     continue
                 s.res[g.cost_res] = stash - keep
-                bought = buy(s, g.id, AUTOBUY_CAP, m)
+                bought = buy(s, g.id, _autobuy_amount(s, g.id, m), m)
                 s.res[g.cost_res] = s.res[g.cost_res] + keep
                 if bought:
                     m = recompute(s)
-            elif buy(s, g.id, AUTOBUY_CAP, m):
+            elif buy(s, g.id, _autobuy_amount(s, g.id, m), m):
                 m = recompute(s)
 
     if s.has_flag("auto_upgrade") and auto.get("upgrades"):
@@ -700,6 +735,26 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
         if s.p1_sp_life >= required * Num(10.0**depth):
             converge(s)
             return
+
+    if s.has_flag("auto_coh") and auto.get("coherence"):
+        # Cheapest next level first, exactly like Standing Seed Orders.
+        bought_any = False
+        for _ in range(AUTOSEED_CAP):
+            best_id, best_cost = None, None
+            for cu in G.COHERENCE_GRID:
+                level = int(s.p2_levels.get(cu.id, 0))
+                if _remaining_levels(level, cu.max_level) <= 0:
+                    continue
+                cost = coherence_cost(cu, level)
+                if cost > s.p2_coh:
+                    continue
+                if best_cost is None or cost < best_cost:
+                    best_id, best_cost = cu.id, cost
+            if best_id is None or not buy_coherence(s, best_id, 1):
+                break
+            bought_any = True
+        if bought_any:
+            m = recompute(s)
 
     if s.has_flag("auto_prestige") and auto.get("prestige_enabled"):
         gain = p1_gain(s)

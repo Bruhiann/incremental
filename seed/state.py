@@ -90,6 +90,7 @@ def _default_auto() -> dict[str, Any]:
         "upgrades": False,
         "relics": False,
         "seed": False,
+        "coherence": False,
         "fuse": False,
         "expedition": False,
         "balance": False,

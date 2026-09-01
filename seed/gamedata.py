@@ -721,6 +721,10 @@ OVERWRITE_GRID: tuple[OverUpg, ...] = (
     OverUpg("ow_archive", "Persistent Archive",
             "Research survives Convergence. You never re-learn anything again.",
             40, 1.0, 1, Eff(SET_FLAG, "keep_research")),
+    OverUpg("ow_autocoh", "Standing Coherence Orders",
+            "The Coherence Nodes buy themselves, cheapest level first. The "
+            "Convergence layer's answer to Standing Seed Orders.", 30, 1.0, 1,
+            Eff(SET_FLAG, "auto_coh")),
     OverUpg("ow_autoconv", "Standing Convergence Orders",
             "Convergence runs itself at a depth you choose.", 60, 1.0, 1,
             Eff(SET_FLAG, "auto_converge")),

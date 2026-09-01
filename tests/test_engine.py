@@ -1494,3 +1494,66 @@ class TestEveryMachineActuallyProduces(unittest.TestCase):
         run(s, 0.5)
         self.assertEqual(s.rates.get("energy", ZERO), ZERO)
         self.assertGreater(s.energy_supply, ZERO)
+
+
+class TestAffordabilityAtExtremeWealth(unittest.TestCase):
+    """max_affordable short-circuited to MAX_BUY once cash was 300+ orders of
+    magnitude past the next unit's price. It was wrong, and it broke buying
+    outright: the button offered a million, buy() priced a million, found it
+    unaffordable, and purchased nothing at all."""
+
+    def _loaded(self, exp=5000):
+        s = new_game()
+        bank = Num(1, exp)
+        s.res["ore"] = bank
+        s.run_life["ore"] = bank
+        E.recompute(s)
+        return s, bank
+
+    def test_max_affordable_is_actually_affordable(self):
+        s, bank = self._loaded()
+        for gid in ("E1", "E2", "E3", "R1"):
+            k = E.max_affordable(s, gid)
+            self.assertGreater(k, 0, gid)
+            self.assertLessEqual(E.cost_of(s, gid, k), bank,
+                                 f"{gid}: claimed {k} but cannot pay for it")
+
+    def test_one_more_is_genuinely_unaffordable(self):
+        s, bank = self._loaded()
+        for gid in ("E1", "E3"):
+            k = E.max_affordable(s, gid)
+            if k < E.MAX_BUY:
+                self.assertGreater(E.cost_of(s, gid, k + 1), bank, gid)
+
+    def test_buy_max_actually_buys(self):
+        s, _ = self._loaded()
+        got = E.buy(s, "E3", "max")
+        self.assertGreater(got, 0, "Buy Max purchased nothing")
+        self.assertEqual(s.bought["E3"].to_float(), float(got))
+        self.assertGreaterEqual(s.res["ore"], ZERO)
+
+    def test_auto_buy_funds_more_than_the_first_machine(self):
+        s, _ = self._loaded()
+        s.p1_levels["sg_autobuy"] = 1
+        s.auto["enabled"] = True
+        E.recompute(s)
+        for g in G.GENERATORS:
+            s.auto["gens"][g.id] = True
+        run(s, 1.0)
+        funded = [g.id for g in G.GENERATORS
+                  if g.cost_res == "ore" and s.bought.get(g.id, ZERO) > 0]
+        self.assertGreater(len(funded), 3, f"only funded {funded}")
+
+    def test_shop_bulk_affordable_agrees_with_its_own_price(self):
+        for growth in (1.0, 1.28, 1.8, 2.5):
+            for exp in (3, 50, 400, 5000):
+                cash = Num(1, exp)
+                k = E.bulk_affordable(3.0, growth, 0, cash)
+                if k <= 0:
+                    continue
+                self.assertLessEqual(E.bulk_cost(3.0, growth, 0, k), cash,
+                                     f"growth={growth} cash=1e{exp} k={k}")
+
+    def test_the_result_is_still_capped(self):
+        s, _ = self._loaded(exp=300000)
+        self.assertLessEqual(E.max_affordable(s, "E1"), E.MAX_BUY)
