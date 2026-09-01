@@ -309,6 +309,29 @@ def main():
     assert str(app.autop_cb.cget("state")) == "normal", "auto-Dispersal still locked"
     print("  auto-Dispersal control enabled")
 
+    # Production rows must stay in ladder order even though machines unlock at
+    # different times -- Tk appends on pack(), so re-shown rows drift to the end.
+    def visual_gen_order():
+        parent = app.gen_rows["hdr_E"].master
+        out = []
+        for child in parent.pack_slaves():
+            for gid, w in app.gen_rows.items():
+                widget = w["row"] if isinstance(w, dict) else w
+                if widget is child:
+                    out.append(gid)
+                    break
+        return out
+
+    app.nb.select(app.frames["production"])
+    app.refresh(); pump(root)
+    shown_order = visual_gen_order()
+    want_order = [k for k in app.gen_rows if k in shown_order]
+    assert shown_order == want_order, f"{shown_order} != {want_order}"
+    hdr_r = shown_order.index("hdr_R")
+    assert all(not g.startswith("E") for g in shown_order[hdr_r:]),         "an Extraction machine is listed under the Replication heading"
+    print(f"  production rows in ladder order: {len(shown_order)} rows, "
+          "no machine under the wrong heading")
+
     # --- Overwrite (prestige layer 3) -----------------------------------
     s.p2_coh_life = G.P3_UNLOCK_COH * N(4)
     app.refresh(); pump(root)

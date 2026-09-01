@@ -129,6 +129,10 @@ AUTOCATALYSIS_RATE = 0.5     # applied to BOUGHT arms only: never unbounded
 # the shortage stops being something the player can act on.
 CROSS_LADDER_K = 0.08        # mult = prod(1 + K*log10(1+count)) over R tiers >= k
 THROTTLE_FLOOR = 0.10
+# Converters asymptote to capturing everything, which starves the input
+# resource to exactly zero and makes anything priced in it unbuyable.
+# A hard ceiling guarantees a share always reaches your pocket.
+MAX_CAPTURE = 0.90
 
 
 @dataclass(frozen=True)

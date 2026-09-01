@@ -1398,3 +1398,99 @@ class TestAutoSeedGrid(unittest.TestCase):
         run(s, 3.0)
         self.assertGreater(s.p1_count, 3, "auto-Dispersal never fired")
         self.assertTrue(s.p1_levels, "the granted Seed Points were never spent")
+
+
+class TestConverterStarvation(unittest.TestCase):
+    """Converters must never take the whole stream.
+
+    With enough refineries the capture asymptote reached 100.000000% of Ore,
+    net Ore income was exactly zero, and every Ore-priced machine became
+    permanently unbuyable.
+    """
+
+    def _refinery_heavy(self, refineries=400):
+        s = rich(ore=0)
+        install(s, "E1", 500)
+        install(s, "E2", 5000)
+        install(s, "E5", refineries)
+        s.res["ore"] = ZERO
+        E.recompute(s)
+        run(s, 2.0)
+        return s
+
+    def test_capture_is_capped(self):
+        s = self._refinery_heavy(5000)
+        cap = E._capture(s.gens["E5"], 0.03)
+        self.assertGreater(cap, 0.99, "the raw asymptote should be near 1")
+        self.assertLessEqual(min(G.MAX_CAPTURE, cap), G.MAX_CAPTURE)
+
+    def test_ore_income_stays_positive(self):
+        s = self._refinery_heavy()
+        self.assertGreater(s.rates["ore"], ZERO, "refineries ate the whole stream")
+
+    def test_ore_still_accumulates(self):
+        s = self._refinery_heavy()
+        before = s.res["ore"]
+        run(s, 2.0)
+        self.assertGreater(s.res["ore"], before)
+
+    def test_ore_priced_machines_stay_buyable(self):
+        s = self._refinery_heavy()
+        run(s, 5.0)
+        ore_priced = [g for g in G.GENERATORS
+                      if g.cost_res == "ore" and g.id in s.unlocked]
+        self.assertTrue(ore_priced)
+        self.assertTrue(any(E.max_affordable(s, g.id) > 0 for g in ore_priced),
+                        "no Ore-priced machine is affordable at any point")
+
+    def test_alloy_still_flows(self):
+        s = self._refinery_heavy()
+        self.assertGreater(s.rates["alloy"], ZERO)
+
+    def test_converters_do_not_drain_the_stock(self):
+        """Capture applies to income; a bank of Ore must not be siphoned."""
+        s = rich(ore=0)
+        install(s, "E2", 5000)
+        install(s, "E5", 400)
+        s.res["ore"] = N(1e9)
+        E.recompute(s)
+        run(s, 2.0)
+        self.assertEqual(s.res["ore"], N(1e9))
+
+
+class TestEveryMachineActuallyProduces(unittest.TestCase):
+    """The engine credited a hardcoded ("ore", "data", "isotope"), so Nanite
+    Vats and Black Hole Taps produced nothing while the UI showed a rate."""
+
+    def test_all_resource_producers_are_credited(self):
+        for g in G.EXTRACT_GENS:
+            if (g.produces not in G.RES_BY_ID or g.produces == "energy"
+                    or g.consumes):
+                continue
+            s = rich()
+            install(s, "E2", 10**6)          # power, so nothing throttles
+            install(s, g.id, 100)
+            s.res[g.produces] = ZERO
+            E.recompute(s)
+            run(s, 1.0)
+            self.assertGreater(s.rates.get(g.produces, ZERO), ZERO,
+                               f"{g.id} ({g.name}) produces no {g.produces}")
+            self.assertGreater(s.res[g.produces], ZERO,
+                               f"{g.id} ({g.name}) credited nothing")
+
+    def test_the_displayed_rate_matches_what_is_credited(self):
+        s = rich()
+        install(s, "E2", 10**6)
+        install(s, "E10", 100)
+        E.recompute(s)
+        run(s, 0.5)
+        shown = s.gens["E10"] * N(G.GEN_BY_ID["E10"].base_rate) * s.mults["E10"]
+        self.assertAlmostEqual((s.rates["exotic"] / shown).to_float(), 1.0, places=6)
+
+    def test_energy_producers_are_not_double_counted(self):
+        s = rich()
+        install(s, "E2", 100)
+        E.recompute(s)
+        run(s, 0.5)
+        self.assertEqual(s.rates.get("energy", ZERO), ZERO)
+        self.assertGreater(s.energy_supply, ZERO)

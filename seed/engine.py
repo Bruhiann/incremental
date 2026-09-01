@@ -511,8 +511,13 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
     # 3. Raw resource rates.
     rates: dict[str, Num] = {r.id: ZERO for r in G.RESOURCES}
     for g in G.EXTRACT_GENS:
-        if g.produces in ("ore", "data", "isotope") and counts[g.id] > 0:
-            rates[g.produces] = rates[g.produces] + counts[g.id] * Num(g.base_rate) * s.mults[g.id] * thr
+        # Any produced resource, derived from the table rather than a hardcoded
+        # list -- Nanite Vats and Black Hole Taps produced literally nothing
+        # while the UI happily displayed a rate for them.
+        if (g.produces in G.RES_BY_ID and g.produces != "energy"
+                and not g.consumes and counts[g.id] > 0):
+            rates[g.produces] = rates[g.produces] + (
+                counts[g.id] * Num(g.base_rate) * s.mults[g.id] * thr)
 
     # 4. Converters capture a fraction of an input resource's INCOME.  Tying
     #    Alloy to Ore income (rather than a flat per-unit cap) is what keeps the
@@ -523,8 +528,10 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
             continue
         in_res, per_unit = g.consumes[0]
         count = counts[g.id]
-        capture = _capture(count, min(0.95, per_unit * m.capture))
-        pool = (rates.get(in_res, ZERO) + s.res.get(in_res, ZERO) / Num(dt)).clamp_min(0)
+        capture = min(G.MAX_CAPTURE, _capture(count, min(0.95, per_unit * m.capture)))
+        # Income only. Draining the stock as well meant the input resource could
+        # never accumulate, and anything priced in it became unbuyable forever.
+        pool = rates.get(in_res, ZERO).clamp_min(0)
         taken = pool * Num(capture)
         rates[in_res] = rates.get(in_res, ZERO) - taken
         made = taken * Num(g.base_rate) * s.mults[g.id] * Num(m.refine) * thr

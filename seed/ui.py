@@ -68,6 +68,32 @@ class Tooltip:
         widget.bind("<Leave>", lambda _e: self.hide(), add="+")
 
 
+def is_packed(widget) -> bool:
+    """Whether the widget is managed by pack right now.
+
+    NOT winfo_ismapped(): that reports on-screen visibility, which is False for
+    every widget on a tab the player is not currently looking at. Using it for
+    show/hide logic meant rows were re-packed (and so re-ordered) whenever their
+    tab happened to be in the background.
+    """
+    return bool(widget.winfo_manager())
+
+
+def pack_ordered(widget, later_widgets, **kw):
+    """Pack `widget` before the first still-visible widget that follows it.
+
+    Tk appends on pack(), so a row that is hidden and later re-shown lands at
+    the bottom regardless of where it belongs. Machines unlock at different
+    times, so without this the Production list drifts out of order and rows end
+    up under the wrong ladder heading.
+    """
+    for candidate in later_widgets:
+        if is_packed(candidate):
+            widget.pack(before=candidate, **kw)
+            return
+    widget.pack(**kw)
+
+
 def scrollable(parent):
     """A vertically scrollable frame. Returns the inner frame."""
     canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
@@ -281,6 +307,15 @@ class App:
         return {"row": row, "title": title, "detail": detail, "pips": pips,
                 "cost": cost, "btn": btn}
 
+    def _rows_after(self, key):
+        """Generator rows and headers that should sit below `key`."""
+        keys = list(self.gen_rows)
+        out = []
+        for later in keys[keys.index(key) + 1:]:
+            w = self.gen_rows[later]
+            out.append(w["row"] if isinstance(w, dict) else w)
+        return out
+
     def _gen_tip(self, g: G.Gen) -> str:
         s = self.state
         lines = [g.name, g.desc, ""]
@@ -301,8 +336,13 @@ class App:
                 lines.append(f"IDLED to {eff * 100:.0f}% — not enough "
                              f"{G.RES_BY_ID[res].name} income.")
         for res_id, per in g.consumes:
-            lines.append(f"Consumes {fmt(N(per) * s.gens.get(g.id, ZERO))} "
-                         f"{G.RES_BY_ID[res_id].name}/s.")
+            m = E.collect_mults(s)
+            capture = min(G.MAX_CAPTURE,
+                          E._capture(s.gens.get(g.id, ZERO), min(0.95, per * m.capture)))
+            lines.append(f"Diverts {capture * 100:.1f}% of your "
+                         f"{G.RES_BY_ID[res_id].name} income "
+                         f"(never more than {G.MAX_CAPTURE * 100:.0f}%, so some "
+                         f"always reaches you).")
         parts = s.breakdown.get(g.id) or []
         if parts:
             lines.append("")
@@ -1071,9 +1111,9 @@ class App:
         s = self.state
         for rid, (box, value, rate) in self.res_labels.items():
             visible = s.run_life.get(rid, ZERO) > 0 or s.res.get(rid, ZERO) > 0
-            if visible and not box.winfo_ismapped():
+            if visible and not is_packed(box):
                 box.pack(side="left", padx=(0, 26))
-            elif not visible and box.winfo_ismapped():
+            elif not visible and is_packed(box):
                 box.pack_forget()
             if not visible:
                 continue
@@ -1161,11 +1201,12 @@ class App:
         for g in G.GENERATORS:
             w = self.gen_rows[g.id]
             if g.id not in s.unlocked:
-                if w["row"].winfo_ismapped():
+                if is_packed(w["row"]):
                     w["row"].pack_forget()
                 continue
-            if not w["row"].winfo_ismapped():
-                w["row"].pack(fill="x", padx=10, pady=2)
+            if not is_packed(w["row"]):
+                pack_ordered(w["row"], self._rows_after(g.id),
+                             fill="x", padx=10, pady=2)
 
             count = s.gens.get(g.id, ZERO)
             bought = s.bought.get(g.id, ZERO)
@@ -1212,10 +1253,10 @@ class App:
             owned = u.id in s.upgrades
             visible = owned or E.check(u.unlock, s)
             if not visible:
-                if card["row"].winfo_ismapped():
+                if is_packed(card["row"]):
                     card["row"].pack_forget()
                 continue
-            if not card["row"].winfo_ismapped():
+            if not is_packed(card["row"]):
                 card["row"].pack(fill="x", padx=10, pady=2)
             if owned:
                 card["btn"].config(text="Owned", state="disabled", bg=BG3, fg=GREEN)
@@ -1233,10 +1274,10 @@ class App:
             owned = t.id in s.research
             visible = owned or E.check(t.unlock, s)
             if not visible:
-                if card["row"].winfo_ismapped():
+                if is_packed(card["row"]):
                     card["row"].pack_forget()
                 continue
-            if not card["row"].winfo_ismapped():
+            if not is_packed(card["row"]):
                 card["row"].pack(fill="x", padx=10, pady=2)
             if owned:
                 card["btn"].config(text="Researched", state="disabled", bg=BG3, fg=GREEN)
@@ -1252,10 +1293,10 @@ class App:
         slots = E.probe_slots(s)
         for i, lbl in enumerate(self.probe_labels):
             if i >= slots:
-                if lbl.winfo_ismapped():
+                if is_packed(lbl):
                     lbl.pack_forget()
                 continue
-            if not lbl.winfo_ismapped():
+            if not is_packed(lbl):
                 lbl.pack(fill="x", pady=1)
             if i < len(s.probes):
                 p = s.probes[i]
@@ -1271,10 +1312,10 @@ class App:
         for t in G.TARGETS:
             card = self.target_rows[t.id]
             if not E.check(t.unlock, s):
-                if card["row"].winfo_ismapped():
+                if is_packed(card["row"]):
                     card["row"].pack_forget()
                 continue
-            if not card["row"].winfo_ismapped():
+            if not is_packed(card["row"]):
                 card["row"].pack(fill="x", padx=10, pady=2)
             can = (len(s.probes) < slots and s.res.get("isotope", ZERO) >= N(t.cost_iso))
             cost = "free" if t.cost_iso <= 0 else f"{fmt(N(t.cost_iso))} Iso"
@@ -1312,7 +1353,7 @@ class App:
         for aid in list(self.artifact_rows):
             if aid not in by_id:
                 self.artifact_rows.pop(aid)["row"].destroy()
-            elif aid not in seen and self.artifact_rows[aid]["row"].winfo_ismapped():
+            elif aid not in seen and is_packed(self.artifact_rows[aid]["row"]):
                 self.artifact_rows[aid]["row"].pack_forget()
 
         for art in shown:
@@ -1328,8 +1369,11 @@ class App:
                 btn.pack(side="right", padx=8)
                 self.artifact_rows[aid] = {"row": row, "name": name, "btn": btn}
             w = self.artifact_rows[aid]
-            if not w["row"].winfo_ismapped():
-                w["row"].pack(fill="x", pady=1)
+            if not is_packed(w["row"]):
+                later = [self.artifact_rows[a["id"]]["row"]
+                         for a in shown[shown.index(art) + 1:]
+                         if a["id"] in self.artifact_rows]
+                pack_ordered(w["row"], later, fill="x", pady=1)
             rarity = G.RARITY_BY_ID.get(art.get("rarity", "common"))
             mut = E.mutation_of(art)
             colour = mut.colour or (rarity.colour if rarity else FG)
@@ -1355,11 +1399,11 @@ class App:
                    self.fuse_all_btn)
         if not fusion:
             for widget in widgets:
-                if widget.winfo_ismapped():
+                if is_packed(widget):
                     widget.pack_forget()
             return
         for widget in widgets:
-            if not widget.winfo_ismapped():
+            if not is_packed(widget):
                 if widget is self.fuse_all_btn:
                     widget.pack(anchor="w", padx=10, pady=(4, 10))
                 else:
@@ -1377,10 +1421,10 @@ class App:
             sets = count // G.FUSE_COUNT
             total += sets
             if count <= 0:
-                if w["row"].winfo_ismapped():
+                if is_packed(w["row"]):
                     w["row"].pack_forget()
                 continue
-            if not w["row"].winfo_ismapped():
+            if not is_packed(w["row"]):
                 w["row"].pack(fill="x", pady=1)
             up = E.next_rarity(rarity.id)
             w["label"].config(text=f"{rarity.name} spare: {count}", fg=rarity.colour)
@@ -1472,9 +1516,9 @@ class App:
         for g in G.GENERATORS:
             cb = self.widgets[f"auto_{g.id}"]
             show = unlocked and g.id in s.unlocked
-            if show and not cb.winfo_ismapped():
+            if show and not is_packed(cb):
                 cb.pack(fill="x", padx=24)
-            elif not show and cb.winfo_ismapped():
+            elif not show and is_packed(cb):
                 cb.pack_forget()
         for key, (var, cb, flag) in self.standing.items():
             state = "normal" if s.has_flag(flag) else "disabled"

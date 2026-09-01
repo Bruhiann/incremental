@@ -481,3 +481,54 @@ round-trip exactly, so every quantity in the game lost its last mantissa digit o
 each save/load cycle. Found because the smoke test compared a saved value against
 its reload and they differed in the sixteenth digit. Two tests now pin it,
 including 50 consecutive save/load cycles with no drift.
+
+---
+
+# Three bugs visible in one screenshot
+
+Reported as "why does it say I have 0 material sometimes". All three confirmed
+against the reporting save before touching anything.
+
+## 1. Refineries captured 100% of the Ore stream
+
+Converters take a fraction of an input resource's income, asymptotic to 1.0 so
+they never stop being useful. At 400 Orbital Refineries that asymptote reached
+**100.000000%**, so net Ore income was exactly zero, the Ore stock sat at zero,
+and **every Ore-priced machine was permanently unbuyable** — a hard progression
+block, not a display quirk. The capture also drew from the Ore *stock*, not just
+income, so a bank could never build up either.
+
+*Fix:* capture applies to income only, and is capped at `MAX_CAPTURE = 0.90`, so
+a tenth of the stream always reaches your pocket. Alloy is unaffected in
+practice — refinery quality multipliers carry the scaling. On the reporting save
+Ore went from a pinned 0 to 2.81e201/s with all eight Ore-priced machines
+buyable again; a 4-hour simulation shows Dispersal cadence unchanged.
+
+## 2. Nanite Vats and Black Hole Taps produced nothing
+
+Production credited a hardcoded `("ore", "data", "isotope")` — a list written
+before Nanites and Exotics existed and never updated. Both machines were fully
+purchasable, showed a rate in the UI, and contributed **zero**. The reporting
+save had 4,890 Black Hole Taps displaying 3.41e51 Exotic Matter/s while the
+engine credited none of it.
+
+*Fix:* the loop derives producers from the resource table instead of a literal.
+A test now walks every Extraction machine that produces a resource and asserts it
+actually credits some, so a new resource cannot be silently dropped again.
+
+## 3. Machines listed under the wrong heading
+
+Tk appends on `pack()`, so a row hidden while locked and re-shown on unlock lands
+at the bottom of the list. Because machines unlock at different times, the
+Production tab drifted out of order — the screenshot showed a Black Hole Tap
+filed under "Replication — machines that make machines".
+
+*Fix:* `pack_ordered()` inserts each row before the first still-packed row that
+should follow it.
+
+The underlying mistake was subtler and worth recording: the show/hide logic used
+`winfo_ismapped()`, which reports **on-screen visibility** and is False for every
+widget on a tab the player is not currently looking at. Rows on a background tab
+were therefore re-packed on every refresh, reshuffling themselves. All 21 uses
+now go through `is_packed()`, which asks `winfo_manager()` — "is this managed by
+pack right now" — which is what the logic always meant.
