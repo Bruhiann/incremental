@@ -84,8 +84,8 @@ everything Dispersal does *plus* Seed Points, the Seed Grid and all Research. It
 grants Coherence and unlocks four things: **Nanite Mass** (a resource that
 compounds in proportion to itself, with a deliberately logarithmic bonus so the
 number runs away but the balance does not), **Doctrines** (five rows of three
-mutually exclusive branches, free and re-picked at every Convergence so no choice
-is a permanent regret), **auto-Dispersal**, and an endless Coherence shop.
+mutually exclusive branches, free and switchable at any time, and kept through a
+Convergence so no choice is a regret), **auto-Dispersal**, and an endless Coherence shop.
 
 **Overwrite** (prestige 3) becomes visible at 150 lifetime Coherence and wipes
 the whole Convergence era — Coherence, the Coherence Nodes and Exotic Matter —

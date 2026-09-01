@@ -573,3 +573,26 @@ An Overwrite node (30 Charges, max level 1) that buys Coherence Nodes on its own
 cheapest level first — the Convergence layer's equivalent of Standing Seed
 Orders. With it, Standing Convergence Orders and Standing Dispersal Orders, the
 whole prestige stack below Overwrite runs itself.
+
+---
+
+# Doctrines now survive a Convergence
+
+They were LAYER-scoped and wiped on every Convergence, on the theory that
+re-picking them was what stopped a choice becoming a permanent regret. That
+reasoning was wrong: Doctrines can be switched at any time for free, so the
+anti-regret property comes from **switching**, not from forced re-picking. All
+the reset achieved was making the player re-click five rows after every reset —
+and with auto-Convergence running, do it without noticing.
+
+They are now PERMANENT: kept through both Convergence and Overwrite, and still
+switchable whenever you like.
+
+The reporting save made the cost obvious. After **17 Convergences it had all five
+rows empty** — every Doctrine had been wiped and never re-picked, so a stack of
+free multipliers (up to x8 global, x3 to an entire ladder) had gone unused for
+the whole run. Nothing in the UI had ever mentioned it.
+
+So the Next Goal strip now leads with unchosen Doctrines whenever any row is
+empty, and the Convergence tab carries a gold note saying how many are unpicked
+and that they are free. Free power should never be invisible.

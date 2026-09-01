@@ -597,10 +597,14 @@ class App:
                                 command=self.do_converge)
         self.p2_btn.pack(anchor="w", padx=12, pady=10)
 
-        tk.Label(inner, text="Doctrines — pick one per row. Free, and re-picked "
-                             "every Convergence, so no choice is permanent.",
+        tk.Label(inner, text="Doctrines — pick one per row. Free, switchable at "
+                             "any time, and kept through a Convergence, so no "
+                             "choice is ever a regret.",
                  bg=BG, fg=ACCENT, font=FB, anchor="w", wraplength=900, justify="left"
                  ).pack(fill="x", padx=10, pady=(10, 4))
+        self.doctrine_note = tk.Label(inner, text="", bg=BG, fg=GOLD, font=FB,
+                                      anchor="w")
+        self.doctrine_note.pack(fill="x", padx=10)
         self.doctrine_btns = {}
         for row in G.DOCTRINE_ROWS:
             strip = tk.Frame(inner, bg=BG)
@@ -689,6 +693,12 @@ class App:
                            fg="#12151c" if gain > 0 else DIM)
 
         unlocked = s.p2_count > 0
+        unpicked = len(G.DOCTRINE_ROWS) - len(s.doctrines) if unlocked else 0
+        self.doctrine_note.config(
+            text=("" if not unpicked else
+                  f"{unpicked} row{'s' if unpicked > 1 else ''} unchosen — these "
+                  "are free, and you keep them through a Convergence."),
+            fg=GOLD)
         for doc in G.DOCTRINES:
             btn = self.doctrine_btns[doc.id]
             chosen = s.doctrines.get(doc.row) == doc.id
@@ -1153,6 +1163,13 @@ class App:
 
     def _next_goal(self) -> str:
         s = self.state
+        # Doctrines are free and easy to never notice -- a real save reached 17
+        # Convergences with all five rows empty.
+        if s.p2_count > 0:
+            unpicked = len(G.DOCTRINE_ROWS) - len(s.doctrines)
+            if unpicked > 0:
+                return (f"pick your free Doctrines on the Convergence tab "
+                        f"({unpicked} row{'s' if unpicked > 1 else ''} unchosen)")
         for g in G.GENERATORS:
             if g.id in s.unlocked and s.gens.get(g.id, ZERO) <= 0:
                 return f"buy your first {g.name} ({fmt(E.cost_of(s, g.id))} " \

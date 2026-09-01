@@ -688,13 +688,33 @@ class TestConvergence(unittest.TestCase):
         E.choose_doctrine(s, "d2_mind")
         self.assertEqual(len(s.doctrines), 2)
 
-    def test_doctrines_are_repicked_each_convergence(self):
+    def test_doctrines_survive_a_convergence(self):
+        """They are free and switchable, so wiping them only cost clicks."""
+        s = self._ready()
+        E.converge(s)
+        E.choose_doctrine(s, "d1_swarm")
+        E.choose_doctrine(s, "d3_mind")
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertEqual(s.doctrines, {1: "d1_swarm", 3: "d3_mind"})
+
+    def test_doctrines_still_apply_after_a_convergence(self):
         s = self._ready()
         E.converge(s)
         E.choose_doctrine(s, "d1_swarm")
         s.p1_sp_life = E.p2_required(s)
         E.converge(s)
-        self.assertEqual(s.doctrines, {})
+        boosted = E.collect_mults(s).ladder.get(G.REPLICATE, Num(1))
+        self.assertGreater(boosted, Num(1), "the kept Doctrine stopped applying")
+
+    def test_doctrines_remain_switchable_afterwards(self):
+        s = self._ready()
+        E.converge(s)
+        E.choose_doctrine(s, "d1_swarm")
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertTrue(E.choose_doctrine(s, "d1_forge"))
+        self.assertEqual(s.doctrines[1], "d1_forge")
 
     def test_doctrine_effects_apply(self):
         s = self._ready()

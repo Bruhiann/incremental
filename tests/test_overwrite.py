@@ -139,8 +139,13 @@ class TestOverwriteReset(unittest.TestCase):
         self.assertEqual(s.p1_sp, ZERO)
         self.assertEqual(s.p1_levels, {})
         self.assertEqual(s.research, set())
-        self.assertEqual(s.doctrines, {})
         self.assertEqual(s.p3_peak_rate, ZERO)
+
+    def test_doctrines_survive_an_overwrite_too(self):
+        s = ready(peak_mult=1e3)
+        s.doctrines[2] = "d2_forge"
+        E.overwrite(s)
+        self.assertEqual(s.doctrines, {1: "d1_swarm", 2: "d2_forge"})
 
     def test_it_keeps_identity_and_collections(self):
         s = ready(peak_mult=1e3)

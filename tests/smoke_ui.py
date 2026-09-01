@@ -173,6 +173,12 @@ def main():
     app._choose_doctrine("d1_forge")          # same row replaces
     app._choose_doctrine("d3_mind")
     assert s.doctrines == {1: "d1_forge", 3: "d3_mind"}, s.doctrines
+    # Doctrines must ride out a Convergence rather than needing five re-clicks.
+    kept = dict(s.doctrines)
+    s.p1_sp_life = E.p2_required(s) * N(1e4)
+    E.converge(s)
+    assert s.doctrines == kept, f"Convergence reset Doctrines: {s.doctrines}"
+    app.refresh(); pump(root)
     s.p2_coh = N(1e12)
     for amount, expect in (("1", 1), ("10", 11), ("25", 36)):
         app.coh_amount.set(amount)

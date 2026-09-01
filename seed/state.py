@@ -36,7 +36,6 @@ RESET_SCOPE: dict[str, str] = {
     "p1_sp": G.LAYER,
     "p1_levels": G.LAYER,
     "p1_sp_life": G.LAYER,     # drives the Convergence bar, so it resets with it
-    "doctrines": G.LAYER,      # re-picked from scratch every Convergence
     # Overwrite clears the Convergence era: its currency, its shop, and the
     # peak that the next Overwrite is measured against.
     "p2_coh": G.COHERE,
@@ -137,7 +136,10 @@ class GameState:
         self.p2_coh_life: Num = ZERO
         self.p2_levels: dict[str, int] = {}
         self.p2_count: int = 0
-        self.doctrines: dict[int, str] = {}     # row -> chosen doctrine id
+        # row -> chosen doctrine id. PERMANENT: Doctrines can be switched at
+        # any time for free, so wiping them on Convergence protected nothing and
+        # only made the player re-click five rows after every reset.
+        self.doctrines: dict[int, str] = {}
 
         # -- Overwrite (layer 3) ----------------------------------------
         self.p3_oc: Num = ZERO
