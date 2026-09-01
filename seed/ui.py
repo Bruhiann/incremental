@@ -619,6 +619,17 @@ class App:
             f"Lifetime Seed Points:  {fmt(s.p1_sp_life)}   /   {fmt(required)} needed",
             "",
             f"Converge now:  +{fmt(gain)} Coherence",
+        ]
+        # Depth pays far more than converging the moment the bar is cleared, and
+        # nothing on this screen used to say so.
+        if gain > 0:
+            body.append("")
+            body.append("Waiting is worth a lot here:")
+            for mult, label in ((10, "10x"), (100, "100x"), (10_000, "10,000x")):
+                deeper = E.p2_gain_at(s, required * Num(mult))
+                body.append(f"    at {label:>8} the bar ({fmt(required * Num(mult))} SP)"
+                            f"   ->  +{fmt(deeper)} Coherence")
+        body += [
             "",
             "RESET: everything Dispersal resets, plus Seed Points, the Seed Grid",
             "          and all Research.",
@@ -1267,12 +1278,12 @@ class App:
         for su in G.SEED_GRID:
             card = self.seed_cards[su.id]
             level = int(s.p1_levels.get(su.id, 0))
-            if level >= su.max_level:
+            if su.max_level and level >= su.max_level:
                 card["btn"].config(text=f"Maxed ({level})", state="disabled",
                                    bg=BG3, fg=GREEN)
                 continue
             afford = E.seed_affordable(s, su.id)
-            headroom = su.max_level - level
+            headroom = (su.max_level - level) if su.max_level else E.MAX_BUY
             if amount == "Max":
                 k = max(1, afford)
             else:

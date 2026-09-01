@@ -366,3 +366,67 @@ that no longer existed. The list now shows your slotted relics plus the ten best
 spares, destroys rows for relics that are gone, and reports the rest as a vault
 count. With **800 relics** auto-fusing down to 18, a tick costs **0.30 ms**
 against a 100 ms budget.
+
+---
+
+# Bug: the Convergence wall (found from a real 10-hour save)
+
+Reported as "I feel bottlenecked". Diagnosed by loading the actual save (on a
+copy) rather than guessing. State: 10h 15m played, 414 Dispersals, 17
+Convergences, **14/14 research, 33/33 upgrades, every machine unlocked**, Alloy
+at 1e135.
+
+## What was actually wrong
+
+**Coherence income grows logarithmically; Coherence prices grew exponentially.**
+That gap can never close, and it is a wall by construction rather than by tuning.
+
+- A Convergence paid **8 Coherence**, and 17 of them had produced 244 total.
+- The next level of Coherent Design cost **43** — 5.4 Convergences for one level.
+  Level 20 would have cost 12,100, or roughly 1,500 Convergences.
+
+Three compounding causes:
+
+1. **The bar tracked power too closely.** `P2_REQ_EXP` at 0.85 meant the
+   requirement rose almost as fast as Seed Points accumulated, so depth past the
+   bar stayed near zero and the log-shaped gain never grew.
+2. **Node prices grew at 1.6-2.4 per level** against that flat income.
+3. **The Seed Grid had saturated** — 10 of 19 nodes capped, the rest costing
+   3-7M SP against 6.6M per Dispersal. Seed Points had almost nowhere to go, so
+   the Dispersal layer had stopped converting effort into anything.
+
+## Fixes
+
+| | Before | After |
+|---|---|---|
+| `P2_BASE` | 5 | 10 |
+| `P2_LOG_EXP` | 1.8 | 2.2 |
+| `P2_REQ_EXP` | 0.85 | 0.65 |
+| Coherence node growth | 1.6 – 2.4 | 1.28 – 1.55 |
+| Endless Seed Grid nodes | 0 | 7 |
+
+Measured on the reporting save: the Convergence bar fell from 21.5M to 7.14M
+lifetime SP, a Convergence went from **8 to 39 Coherence**, and the next
+Coherent Design level went from **43 to 7.2**. Roughly a 30x improvement in
+levels-per-Convergence.
+
+## The UX half of the bug
+
+The Dispersal screen has always shown a projection ("in 10 minutes at this
+rate"). The **Convergence screen showed only the current gain**, so nothing ever
+told the player that depth pays: 1x the bar gives 10 Coherence, 100x gives 112,
+10,000x gives 344. Converging the moment the bar cleared was the natural move and
+also the worst one — which is exactly what 17 Convergences at minimum value look
+like. The screen now shows what waiting is worth.
+
+## Not a regression
+
+A fresh 10-hour simulation still puts the first Convergence at 3h 06m and the
+second at 5h 28m, with Research intact at 14/14 — the treadmill this exponent
+originally guarded against has not come back.
+
+## The part that is not a bug
+
+That save had consumed **all** the content: every research node, every upgrade,
+every machine. Layer 3 (Overwrite) does not exist yet, and at 17 Convergences
+that is what the player is actually out of.

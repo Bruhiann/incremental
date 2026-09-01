@@ -123,7 +123,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 257 tests, headless
+py -m unittest discover -s tests -t .   # 258 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```

@@ -406,22 +406,22 @@ class SeedUpg:
     desc: str
     base_cost: float
     cost_growth: float
-    max_level: int
+    max_level: int          # 0 == endless, like the Coherence shop
     effect: Eff
 
 
 SEED_GRID: tuple[SeedUpg, ...] = (
     SeedUpg("sg_global", "Inherited Design",
-            "+25% to everything you produce, per level.", 1, 1.8, 50,
+            "+25% to everything you produce, per level.", 1, 1.8, 0,
             Eff(MULT_GLOBAL, "", 1.25)),
-    SeedUpg("sg_ore", "Ore Memory", "Ore machines produce +50% per level.", 2, 1.7, 40,
+    SeedUpg("sg_ore", "Ore Memory", "Ore machines produce +50% per level.", 2, 1.7, 0,
             Eff(MULT_RES, "ore", 1.5)),
-    SeedUpg("sg_energy", "Power Memory", "Power machines produce +50% per level.", 2, 1.7, 40,
+    SeedUpg("sg_energy", "Power Memory", "Power machines produce +50% per level.", 2, 1.7, 0,
             Eff(MULT_RES, "energy", 1.5)),
-    SeedUpg("sg_alloy", "Alloy Memory", "Refineries produce +50% per level.", 4, 1.75, 40,
+    SeedUpg("sg_alloy", "Alloy Memory", "Refineries produce +50% per level.", 4, 1.75, 0,
             Eff(MULT_RES, "alloy", 1.5)),
     SeedUpg("sg_rep", "Replication Memory",
-            "Replication machines work +50% faster per level.", 8, 1.8, 40,
+            "Replication machines work +50% faster per level.", 8, 1.8, 0,
             Eff(MULT_LADDER, REPLICATE, 1.5)),
     SeedUpg("sg_cheap", "Cached Blueprints",
             "All machine costs scale 0.3% more slowly per level.", 15, 2.2, 15,
@@ -458,10 +458,10 @@ SEED_GRID: tuple[SeedUpg, ...] = (
             Eff(SET_FLAG, "auto_balance")),
     SeedUpg("sg_relic", "Relic Harness", "+1 Relic slot per level.", 40, 3.0, 6,
             Eff(ADD_SLOT, "relic", 1)),
-    SeedUpg("sg_drop", "Fine Sieves", "+25% chance to find artifacts, per level.", 30, 2.0, 20,
+    SeedUpg("sg_drop", "Fine Sieves", "+25% chance to find artifacts, per level.", 30, 2.0, 0,
             Eff(MULT_DROP, "", 1.25)),
     SeedUpg("sg_sp", "Denser Seed", "+10% Seed Points from every Dispersal, per level.",
-            50, 2.5, 25, Eff(MULT_SP, "", 1.10)),
+            50, 2.5, 0, Eff(MULT_SP, "", 1.10)),
 )
 SEED_BY_ID = {s.id: s for s in SEED_GRID}
 
@@ -509,10 +509,10 @@ LAYER_BY_ID = {l.id: l for l in LAYERS}
 # answer.  See BALANCE.md.
 
 P2_UNLOCK_SP = N(20_000)          # lifetime Seed Points needed to SEE the tab
-P2_BASE = 5.0
-P2_LOG_EXP = 1.8
+P2_BASE = 10.0
+P2_LOG_EXP = 2.2
 P2_REQ_BASE = N(2e5)           # lifetime Seed Points needed to Converge
-P2_REQ_EXP = 0.85                # bar rises with the Coherence you already hold
+P2_REQ_EXP = 0.65                # bar rises with the Coherence you already hold
 
 # Nanite Mass compounds: rate = nanites * NANITE_SELF_RATE (plus vat seeding).
 # Its EFFECT is logarithmic, so an exponential resource stays balanced while
@@ -604,23 +604,23 @@ class CohUpg:
 # Endless by design: these are the late-game sink that keeps scaling forever.
 COHERENCE_GRID: tuple[CohUpg, ...] = (
     CohUpg("c_global", "Coherent Design",
-           "+50% to everything you produce, per level.", 1, 1.6, 0,
+           "+50% to everything you produce, per level.", 1, 1.28, 0,
            Eff(MULT_GLOBAL, "", 1.5)),
     CohUpg("c_rep", "Coherent Replication",
-           "Replication machines work +80% faster per level.", 2, 1.7, 0,
+           "Replication machines work +80% faster per level.", 2, 1.30, 0,
            Eff(MULT_LADDER, REPLICATE, 1.8)),
     CohUpg("c_sp", "Seeded Memory",
-           "+40% Seed Points from every Dispersal, per level.", 3, 1.8, 0,
+           "+40% Seed Points from every Dispersal, per level.", 3, 1.32, 0,
            Eff(MULT_SP, "", 1.4)),
     CohUpg("c_cheap", "Inherited Tooling",
-           "All machine costs scale 0.4% more slowly per level.", 8, 2.4, 20,
+           "All machine costs scale 0.4% more slowly per level.", 8, 1.55, 40,
            Eff(ADD_GROWTH, "*", -0.004)),
     CohUpg("c_nanite", "Nanite Doctrine",
-           "Nanite Mass grows +60% faster per level.", 5, 1.9, 0,
+           "Nanite Mass grows +60% faster per level.", 5, 1.34, 0,
            Eff(MULT_NANITE, "", 1.6)),
     CohUpg("c_cross", "Deep Coupling",
            "The Replication-to-Extraction bonus is +25% stronger per level.",
-           10, 2.1, 12, Eff(MULT_CROSS, "", 1.25)),
+           10, 1.45, 30, Eff(MULT_CROSS, "", 1.25)),
     CohUpg("c_autoseed", "Standing Seed Orders",
            "The Seed Grid buys itself, always taking whichever level is "
            "cheapest next. Together with Standing Dispersal Orders this makes "
@@ -631,7 +631,7 @@ COHERENCE_GRID: tuple[CohUpg, ...] = (
            Eff(SET_FLAG, "auto_prestige")),
     CohUpg("c_start", "Converged Cache",
            "Begin every Dispersal with 100x more starting Ore, per level.",
-           6, 2.2, 15, Eff(START_RES, "ore", 100.0)),
+           6, 1.50, 30, Eff(START_RES, "ore", 100.0)),
 )
 COH_BY_ID = {c.id: c for c in COHERENCE_GRID}
 

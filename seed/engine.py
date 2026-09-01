@@ -657,7 +657,7 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
             best_id, best_cost = None, None
             for su in G.SEED_GRID:
                 level = int(s.p1_levels.get(su.id, 0))
-                if level >= su.max_level:
+                if _remaining_levels(level, su.max_level) <= 0:
                     continue
                 cost = seed_cost(su, level)
                 if cost > s.p1_sp:
@@ -1118,15 +1118,22 @@ def p2_required(s: GameState) -> Num:
     return G.P2_REQ_BASE * ((ONE + s.p2_coh_life) ** G.P2_REQ_EXP)
 
 
-def p2_gain(s: GameState) -> Num:
-    life = s.p1_sp_life
+def p2_gain_at(s: GameState, lifetime_sp: Num) -> Num:
+    """What a Convergence would pay at a given lifetime Seed Point total.
+
+    Used by the UI to show that depth pays, which the screen never said.
+    """
     required = p2_required(s)
-    if life < required:
+    if lifetime_sp < required:
         return ZERO
-    depth = life.log10() - required.log10()
+    depth = lifetime_sp.log10() - required.log10()
     m = collect_mults(s)
     gain = Num(G.P2_BASE * m.coh) * Num((depth + 1.0) ** G.P2_LOG_EXP)
     return Num(math.floor(gain.to_float())) if gain.e < 15 else gain
+
+
+def p2_gain(s: GameState) -> Num:
+    return p2_gain_at(s, s.p1_sp_life)
 
 
 def p2_available(s: GameState) -> bool:

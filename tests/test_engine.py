@@ -1315,7 +1315,18 @@ class TestAutoSeedGrid(unittest.TestCase):
         s = self._ready(sp=1e12)
         run(s, 5.0)
         for su in G.SEED_GRID:
-            self.assertLessEqual(int(s.p1_levels.get(su.id, 0)), su.max_level, su.id)
+            if su.max_level:                      # 0 == endless
+                self.assertLessEqual(int(s.p1_levels.get(su.id, 0)),
+                                     su.max_level, su.id)
+
+    def test_endless_seed_nodes_keep_absorbing_points(self):
+        """The Seed Grid used to saturate, leaving Seed Points with no sink."""
+        s = self._ready(sp=1e30)
+        run(s, 3.0)
+        endless = [su.id for su in G.SEED_GRID if not su.max_level]
+        self.assertTrue(endless, "no endless Seed Grid nodes exist")
+        self.assertTrue(any(s.p1_levels.get(i, 0) > 25 for i in endless),
+                        "endless nodes did not absorb a large bank")
 
     def test_it_spreads_across_nodes_rather_than_dumping_into_one(self):
         """Exponential costs mean cheapest-first equalises marginal cost."""
