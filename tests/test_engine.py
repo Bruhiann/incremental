@@ -1577,3 +1577,76 @@ class TestAffordabilityAtExtremeWealth(unittest.TestCase):
     def test_the_result_is_still_capped(self):
         s, _ = self._loaded(exp=300000)
         self.assertLessEqual(E.max_affordable(s, "E1"), E.MAX_BUY)
+
+
+class TestPurchaseCeiling(unittest.TestCase):
+    """A million-unit ceiling throttled auto-buy to a crawl for players who
+    could afford a billion at a time."""
+
+    OLD_CEILING = 1_000_000          # what the cap used to be
+
+    def _wealthy(self, exp=3_300_000):
+        s = new_game()
+        bank = Num(1, exp)
+        s.res["ore"] = bank
+        s.run_life["ore"] = bank
+        E.recompute(s)
+        return s, bank
+
+    def test_a_player_can_buy_what_they_can_afford(self):
+        s, bank = self._wealthy()
+        k = E.max_affordable(s, "E1")
+        self.assertGreater(k, self.OLD_CEILING * 10,
+                           "still throttled near the old ceiling")
+        self.assertLessEqual(E.cost_of(s, "E1", k), bank,
+                             "claimed more than it can pay for")
+
+    def test_buying_that_many_actually_works(self):
+        s, bank = self._wealthy()
+        got = E.buy(s, "E1", "max")
+        self.assertGreater(got, self.OLD_CEILING * 10)
+        self.assertEqual(s.bought["E1"].to_float(), float(got))
+        self.assertGreaterEqual(s.res["ore"], ZERO)
+
+    def test_auto_buy_allowance_scales_with_it(self):
+        s, _ = self._wealthy()
+        m = E.recompute(s)
+        self.assertGreater(E._autobuy_amount(s, "E1", m), self.OLD_CEILING)
+
+    def test_still_bounded(self):
+        s, _ = self._wealthy(exp=10**9)
+        self.assertLessEqual(E.max_affordable(s, "E1"), E.MAX_BUY)
+
+
+class TestTenfoldAtScale(unittest.TestCase):
+    """The per-10 bonus returned 0 outright once `bought` reached 1e15 --
+    silently switching itself off exactly when a player got strong enough."""
+
+    def test_steps_keep_counting_past_the_old_guard(self):
+        self.assertEqual(E._tenfold_steps(N(100)), 10)
+        self.assertGreater(E._tenfold_steps(Num(1, 15)), 0,
+                           "the bonus vanished at 1e15")
+        self.assertGreater(E._tenfold_steps(Num(1, 40)),
+                           E._tenfold_steps(Num(1, 20)))
+
+    def test_below_ten_earns_nothing(self):
+        self.assertEqual(E._tenfold_steps(ZERO), 0)
+        self.assertEqual(E._tenfold_steps(N(9)), 0)
+
+    def test_it_stays_finite_at_absurd_counts(self):
+        steps = E._tenfold_steps(Num(1, 5000))
+        self.assertTrue(math.isfinite(steps))
+        self.assertGreater(Num(1.1) ** steps, N(1))
+
+    def test_the_multiplier_survives_a_huge_purchase(self):
+        s = new_game()
+        bank = Num(1, 3_000_000)
+        s.res["ore"] = bank
+        s.run_life["ore"] = bank
+        E.recompute(s)
+        E.buy(s, "E1", "max")
+        E.recompute(s)
+        labels = [lbl for lbl, _ in s.breakdown["E1"]]
+        self.assertTrue(any("Every 10 owned" in lbl for lbl in labels),
+                        "the per-10 bonus disappeared after a large purchase")
+        self.assertGreater(s.mults["E1"], N(1))

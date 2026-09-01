@@ -18,7 +18,11 @@ MILESTONE_BY_ID = {m.id: m for m in G.MILESTONES}
 ACH_BY_ID = {a.id: a for a in G.ACHIEVEMENTS}
 TARGET_BY_ID = {t.id: t for t in G.TARGETS}
 
-MAX_BUY = 1_000_000          # cap on a single purchase call
+# Cap on a single purchase call. The maths is closed-form, so a large count
+# costs no more to compute than a small one -- the cap exists only to keep
+# counts sane. A million is far too low once a player can afford a billion
+# units at a time, which throttles auto-buy to a crawl for no reason.
+MAX_BUY = 10**15
 AUTOBUY_CAP = 50             # floor on units a generator may auto-buy per tick
 # ...but a flat floor is glacial once you can afford a million levels a tick, so
 # the real allowance is a share of what you could buy outright. Taking a share
@@ -207,6 +211,23 @@ def _capture(count: Num, per_unit: float) -> float:
     return 1.0 - (1.0 - per_unit) ** n
 
 
+def _tenfold_steps(bought: Num) -> float:
+    """How many complete tens have been purchased.
+
+    This used to return 0 outright once `bought` reached 1e15, which silently
+    switched the whole per-10 bonus off at exactly the point a player got strong
+    enough to reach it. It now degrades by magnitude instead of vanishing.
+    """
+    if bought < 10:
+        return 0.0
+    tens = bought / Num(10)
+    if tens.e < 15:
+        return float(math.floor(tens.to_float()))
+    if tens.e < 300:
+        return tens.to_float()
+    return 1e300            # finite, so pow() stays well defined
+
+
 def _cross_ladder(s: GameState, tier: int, k_mult: float = 1.0) -> float:
     """Replication tiers retro-boost Extraction, lower tiers most.
 
@@ -268,7 +289,7 @@ def recompute(s: GameState) -> Mults:
                 total = total * rm
                 parts.append(("Resource", rm.to_float()))
         bought = s.bought.get(g.id, ZERO)
-        steps = int(bought.to_float() // 10) if bought.e < 15 else 0
+        steps = _tenfold_steps(bought)
         if steps:
             step = 1.0 + G.TENFOLD_BASE + m.tenfold.get(g.id, 0.0) + m.tenfold.get("*", 0.0)
             tf = Num(step) ** steps

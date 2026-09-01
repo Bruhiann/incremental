@@ -596,3 +596,37 @@ the whole run. Nothing in the UI had ever mentioned it.
 So the Next Goal strip now leads with unchosen Doctrines whenever any row is
 empty, and the Convergence tab carries a gold note saying how many are unpicked
 and that they are free. Free power should never be invisible.
+
+---
+
+# The purchase ceiling was throttling auto-buy
+
+Reported as "I don't think the auto purchaser is working, or am I producing too
+much". The tell in the screenshot: Solar Film, Asteroid Mine, Fusion Cell and
+Orbital Refinery all sat at **exactly x82.3M**. Identical counts across machines
+with wildly different prices means auto-buy is running fine and every one of them
+is hitting the same ceiling.
+
+`MAX_BUY` capped any single purchase at 1,000,000 units. On the reporting save the
+player could afford **1,249,533,172** — the cap was throttling them by a factor of
+1,250, and auto-buy (a tenth of that per tick) crawled at 100,000/tick while
+income ran at 1e3,300,000/s.
+
+The cap existed to keep counts sane, but the purchase maths is closed-form: a
+billion units costs exactly as much to compute as ten. It is now `10**15`.
+Measured against the Ore bank in the screenshot, Buy Max went from 1,000,000 to
+**763,614,520 units actually purchased**.
+
+## And a bonus that switched itself off
+
+Raising the ceiling exposed a latent bug. The per-10 multiplier counted steps as
+`int(bought.to_float() // 10) if bought.e < 15 else 0` — so at 1e15 purchased
+units the entire per-10 bonus silently became **zero**, at exactly the point a
+player grew strong enough to reach it. With the old ceiling that was unreachable;
+with the new one it is not. `_tenfold_steps()` now degrades by magnitude instead
+of vanishing, and a test asserts the bonus still appears in the multiplier
+breakdown after a huge purchase.
+
+So the answer to the question was: auto-buy was working, production was not too
+fast, and the ceiling was simply set for a much smaller game than the one that
+now exists.
