@@ -309,12 +309,68 @@ def main():
     assert str(app.autop_cb.cget("state")) == "normal", "auto-Dispersal still locked"
     print("  auto-Dispersal control enabled")
 
+    # --- Overwrite (prestige layer 3) -----------------------------------
+    s.p2_coh_life = G.P3_UNLOCK_COH * N(4)
+    app.refresh(); pump(root)
+    assert "overwrite" in app.visible_tabs, app.visible_tabs
+    app.nb.select(app.frames["overwrite"])
+    app.refresh(); pump(root)
+
+    s.p3_peak_rate = E.p3_required(s) * N(1e12)
+    s.p2_levels["c_global"] = 9
+    s.p1_sp = N(5000)
+    s.research.add("r_foreman")
+    E.recompute(s)
+    app.refresh(); pump(root)
+    charges = E.p3_gain(s)
+    assert charges > ZERO, "Overwrite not available in the smoke state"
+    app.do_overwrite()
+    pump(root)
+    assert s.p3_count == 1 and s.p3_oc == charges, (s.p3_count, fmt(s.p3_oc))
+    assert s.p2_coh == ZERO and s.p2_levels == {}, "the Coherence era survived"
+    assert s.p1_sp == ZERO and s.research == set(), "layer-2 reset did not apply"
+    assert s.p1_count > 0, "Dispersal count must survive"
+    E.recompute(s)
+    assert s.has_flag("exotics") and "E10" in s.unlocked
+    print(f"  overwrote: +{fmt(charges)} Charges, Coherence era wiped, "
+          f"Exotics unlocked")
+
+    # Floors: buy one and confirm the next Dispersal starts above zero.
+    s.p3_oc = N(1e6)
+    app.over_amount.set("10")
+    app.refresh(); pump(root)
+    app._buy_over("ow_floor_e")
+    assert s.p3_levels["ow_floor_e"] == 10, s.p3_levels
+    app._buy_over("ow_archive")
+    s.run_life["alloy"] = E.p1_required(s) * N(1e3)
+    E.prestige(s, "p1")
+    assert s.gens["E5"].to_float() == 250.0, fmt(s.gens["E5"])
+    print(f"  floor applied: a fresh run now starts with "
+          f"{fmt(s.gens['E5'])} Orbital Refineries")
+
+    # Persistent Archive keeps research through a Convergence.
+    s.research.add("r_probes")
+    E.recompute(s)
+    s.p1_sp_life = E.p2_required(s) * N(1e4)
+    E.converge(s)
+    assert "r_probes" in s.research, "Persistent Archive did not hold"
+    print("  persistent archive held research through a Convergence")
+
+    app.nb.select(app.frames["automation"])
+    app.refresh(); pump(root)
+    print(f"  auto-Convergence control: {app.autoc_cb.cget('state')}")
+
     # Save/close path.
     app.save_now()
     assert saveman.save_path().exists()
     reloaded, status = saveman.load()
-    assert status == "loaded" and reloaded.p1_count == 1
-    print(f"  saved and reloaded: status={status} dispersals={reloaded.p1_count}")
+    assert status == "loaded" and reloaded.p1_count >= 1
+    for field in ("p3_count", "p3_oc", "p3_levels", "p3_peak_rate"):
+        want, got = getattr(s, field), getattr(reloaded, field)
+        assert want == got, f"{field}: saved {want!r} but loaded {got!r}"
+    print(f"  saved and reloaded: status={status} "
+          f"dispersals={reloaded.p1_count} overwrites={reloaded.p3_count} "
+          f"charges={fmt(reloaded.p3_oc)}")
 
     root.destroy()
     print("\nSMOKE OK")

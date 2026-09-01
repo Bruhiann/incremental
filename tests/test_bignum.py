@@ -161,6 +161,23 @@ class TestPersistence(unittest.TestCase):
             self.assertEqual(restored.e, original.e)
             self.assertAlmostEqual(restored.m, original.m, places=12)
 
+    def test_round_trip_is_bit_exact(self):
+        """15 significant digits silently drops the last one; floats need 17."""
+        import random
+        rng = random.Random(11)
+        for _ in range(500):
+            original = Num(rng.uniform(1.0, 10.0), rng.randint(-200, 200))
+            restored = Num.from_json(original.to_json())
+            self.assertEqual(restored.m, original.m,
+                             f"{original.m!r} -> {restored.m!r}")
+            self.assertEqual(restored.e, original.e)
+
+    def test_repeated_save_load_does_not_drift(self):
+        n = Num(9.997962295211261, 5)
+        for _ in range(50):
+            n = Num.from_json(n.to_json())
+        self.assertEqual(n.m, 9.997962295211261)
+
     def test_from_json_tolerates_raw(self):
         self.assertEqual(Num.from_json(1000), Num(1000))
         self.assertEqual(Num.from_json(None), ZERO)

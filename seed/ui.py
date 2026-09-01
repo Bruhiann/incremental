@@ -28,6 +28,7 @@ GREEN = "#4ea36a"
 YELLOW = "#c9a227"
 RED = "#c05050"
 VIOLET = "#9a6fd0"
+CRIMSON = "#d8506f"
 
 F = ("Segoe UI", 9)
 FB = ("Segoe UI", 9, "bold")
@@ -195,6 +196,7 @@ class App:
             "exploration": self._build_exploration,
             "prestige": self._build_prestige,
             "convergence": self._build_convergence,
+            "overwrite": self._build_overwrite,
             "automation": self._build_automation,
             "stats": self._build_stats,
         }
@@ -316,6 +318,8 @@ class App:
             self.state.settings["seed_buy_amount"] = self.seed_amount.get()
         if hasattr(self, "coh_amount"):
             self.state.settings["coh_buy_amount"] = self.coh_amount.get()
+        if hasattr(self, "over_amount"):
+            self.state.settings["over_buy_amount"] = self.over_amount.get()
 
     def manual(self):
         s = self.state
@@ -528,7 +532,7 @@ class App:
 
         tk.Label(inner, text="Later layers", bg=BG, fg=ACCENT, font=FB, anchor="w"
                  ).pack(fill="x", padx=10, pady=(14, 2))
-        for layer in G.LAYERS[2:]:
+        for layer in G.LAYERS[3:]:
             tk.Label(inner, text=f"{layer.name} — {layer.currency_name} — locked",
                      bg=BG2, fg=DIM, font=F, anchor="w", padx=10, pady=6
                      ).pack(fill="x", padx=10, pady=2)
@@ -690,6 +694,108 @@ class App:
         saveman.save(s)
         self.refresh()
 
+    # -- overwrite -------------------------------------------------------
+    def _build_overwrite(self, parent):
+        inner = scrollable(parent)
+        top = tk.Frame(inner, bg=BG2)
+        top.pack(fill="x", padx=10, pady=10)
+        tk.Label(top, text="Overwrite", bg=BG2, fg=CRIMSON, font=FH, anchor="w"
+                 ).pack(fill="x", padx=12, pady=(10, 2))
+        self.p3_body = tk.Label(top, text="", bg=BG2, fg=FG, font=F, anchor="w",
+                                justify="left", wraplength=900)
+        self.p3_body.pack(fill="x", padx=12)
+        self.p3_btn = tk.Button(top, text="Overwrite", bg=CRIMSON, fg="#12151c",
+                                font=FB, relief="flat", cursor="hand2",
+                                padx=20, pady=8, command=self.do_overwrite)
+        self.p3_btn.pack(anchor="w", padx=12, pady=10)
+
+        tk.Label(inner,
+                 text="Floors - permanent starting states, paid for with Charges",
+                 bg=BG, fg=ACCENT, font=FB, anchor="w"
+                 ).pack(fill="x", padx=10, pady=(10, 2))
+        self.over_amount = tk.StringVar(
+            value=self.state.settings.get("over_buy_amount", "1"))
+        self._amount_strip(inner, self.over_amount, "Buy")
+        self.over_cards = {}
+        for ou in G.OVERWRITE_GRID:
+            self.over_cards[ou.id] = self._card(
+                inner, ou.name, ou.desc, lambda oid=ou.id: self._buy_over(oid))
+
+    def _buy_over(self, oid):
+        amount = self.over_amount.get()
+        if E.buy_overwrite(self.state, oid,
+                           "max" if amount == "Max" else int(amount)):
+            self.refresh()
+
+    def do_overwrite(self):
+        s = self.state
+        gain = E.p3_gain(s)
+        if gain <= 0:
+            return
+        if s.settings.get("confirm_prestige", True):
+            message = (
+                f"Gain {fmt(gain)} Overwrite Charges.\n\n"
+                "RESET: everything Convergence resets, AND your Coherence,\n"
+                "          the Coherence Nodes, and Exotic Matter.\n"
+                "KEPT: Charges and the Floors they buy, artifacts,\n"
+                "          milestones, achievements, and every unlocked tier.\n\n"
+                "Charges come from your PEAK Alloy per second, so waiting\n"
+                "earns nothing - only a better engine does. Overwrite now?")
+            if not messagebox.askyesno("Overwrite?", message):
+                return
+        E.overwrite(s)
+        saveman.save(s)
+        self.refresh()
+
+    def _refresh_overwrite(self):
+        s = self.state
+        gain = E.p3_gain(s)
+        required = E.p3_required(s)
+        body = [
+            f"Overwrite Charges:  {fmt(s.p3_oc)}      Overwrites: {s.p3_count}",
+            f"Peak Alloy/s this era:  {fmt(s.p3_peak_rate)}   /   "
+            f"{fmt(required)} needed",
+            "",
+            f"Overwrite now:  +{fmt(gain)} Charges",
+        ]
+        if gain > 0:
+            body.append("")
+            body.append("A stronger engine pays more:")
+            for mult, label in ((1e3, "1,000x"), (1e6, "1,000,000x")):
+                deeper = E.p3_gain_at(s, required * Num(mult))
+                body.append(f"    peak {label:>12} the bar  ->  +{fmt(deeper)} Charges")
+        body += [
+            "",
+            "RESET: everything Convergence resets, plus Coherence, the",
+            "          Coherence Nodes and Exotic Matter.",
+            "KEPT:  Charges and Floors, artifacts, milestones, achievements.",
+            "",
+            "Charges come from your PEAK Alloy per second, never a lifetime",
+            "total - waiting earns nothing here, only a better engine does.",
+        ]
+        if gain <= 0:
+            body += ["", f"Needs a peak of {fmt(required)} Alloy/s this era."]
+        self.p3_body.config(text=chr(10).join(body))
+        self.p3_btn.config(state="normal" if gain > 0 else "disabled",
+                           bg=CRIMSON if gain > 0 else BG3,
+                           fg="#12151c" if gain > 0 else DIM)
+
+        amount = self.over_amount.get()
+        for ou in G.OVERWRITE_GRID:
+            card = self.over_cards[ou.id]
+            level = int(s.p3_levels.get(ou.id, 0))
+            if ou.max_level and level >= ou.max_level:
+                card["btn"].config(text=f"Maxed ({level})", state="disabled",
+                                   bg=BG3, fg=GREEN)
+                continue
+            afford = E.overwrite_affordable(s, ou.id)
+            headroom = (ou.max_level - level) if ou.max_level else E.MAX_BUY
+            k = max(1, afford) if amount == "Max" else min(int(amount), headroom)
+            cost = E.overwrite_cost(ou, level, k)
+            can = afford > 0 and s.p3_oc >= cost
+            cap = f"/{ou.max_level}" if ou.max_level else ""
+            self._shop_button(card, level, cap, cost, "OC", k, can, CRIMSON)
+
     # -- automation ------------------------------------------------------
     def _build_automation(self, parent):
         inner = scrollable(parent)
@@ -754,6 +860,28 @@ class App:
         tk.Label(prow, text="x the Seed Points you already hold", bg=BG, fg=DIM,
                  font=F).pack(side="left")
 
+        tk.Label(inner, text="Auto-Convergence", bg=BG, fg=ACCENT, font=FB,
+                 anchor="w").pack(fill="x", padx=10, pady=(14, 2))
+        self.autoc_var = tk.BooleanVar(
+            value=bool(self.state.auto.get("converge_enabled")))
+        self.autoc_cb = tk.Checkbutton(
+            inner, text="Converge automatically", variable=self.autoc_var,
+            command=self._autoc_changed, bg=BG, fg=FG, font=F, selectcolor=BG3,
+            activebackground=BG, anchor="w")
+        self.autoc_cb.pack(fill="x", padx=24)
+        crow = tk.Frame(inner, bg=BG)
+        crow.pack(fill="x", padx=24, pady=2)
+        tk.Label(crow, text="when lifetime Seed Points reach 10^", bg=BG, fg=DIM,
+                 font=F).pack(side="left")
+        self.autoc_entry = tk.Entry(crow, bg=BG3, fg=FG, font=FMONO, width=5,
+                                    insertbackground=FG, relief="flat")
+        self.autoc_entry.insert(0, str(self.state.auto.get("converge_depth", 2.0)))
+        self.autoc_entry.pack(side="left", padx=6)
+        self.autoc_entry.bind("<FocusOut>", lambda _e: self._autoc_depth())
+        self.autoc_entry.bind("<Return>", lambda _e: self._autoc_depth())
+        tk.Label(crow, text="x past the bar (depth pays: 2 means 100x)", bg=BG,
+                 fg=DIM, font=F).pack(side="left")
+
         tk.Label(inner, text="Standing orders", bg=BG, fg=ACCENT, font=FB, anchor="w"
                  ).pack(fill="x", padx=10, pady=(14, 2))
         self.standing = {}
@@ -770,6 +898,18 @@ class App:
                                 command=lambda k=key, v=var: self._standing_changed(k, v))
             cb.pack(fill="x", padx=24)
             self.standing[key] = (var, cb, flag)
+
+    def _autoc_changed(self):
+        self.state.auto["converge_enabled"] = bool(self.autoc_var.get())
+
+    def _autoc_depth(self):
+        try:
+            value = max(0.0, float(self.autoc_entry.get().strip() or "2"))
+        except ValueError:
+            value = 2.0
+        self.state.auto["converge_depth"] = value
+        self.autoc_entry.delete(0, "end")
+        self.autoc_entry.insert(0, f"{value:g}")
 
     def _autop_changed(self):
         self.state.auto["prestige_enabled"] = bool(self.autop_var.get())
@@ -912,6 +1052,8 @@ class App:
             self._refresh_prestige()
         elif current == "Convergence":
             self._refresh_convergence()
+        elif current == "Overwrite":
+            self._refresh_overwrite()
         elif current == "Automation":
             self._refresh_automation()
         elif current == "Stats":
@@ -1311,6 +1453,9 @@ class App:
             want = bool(s.auto.get(key))
             if bool(var.get()) != want:
                 var.set(want)
+        want_c = bool(s.auto.get("converge_enabled"))
+        if bool(self.autoc_var.get()) != want_c:
+            self.autoc_var.set(want_c)
         want_p = bool(s.auto.get("prestige_enabled"))
         if bool(self.autop_var.get()) != want_p:
             self.autop_var.set(want_p)
@@ -1337,6 +1482,9 @@ class App:
         ap = "normal" if s.has_flag("auto_prestige") else "disabled"
         self.autop_cb.config(state=ap, fg=FG if ap == "normal" else DIM)
         self.autop_entry.config(state=ap)
+        ac = "normal" if s.has_flag("auto_converge") else "disabled"
+        self.autoc_cb.config(state=ac, fg=FG if ac == "normal" else DIM)
+        self.autoc_entry.config(state=ac)
 
     def _refresh_stats(self):
         s = self.state
@@ -1358,6 +1506,9 @@ class App:
             "",
             f"Dispersals          {s.p1_count}",
             f"Convergences        {s.p2_count}",
+            f"Overwrites          {s.p3_count}",
+            f"Overwrite Charges   {fmt(s.p3_oc)}",
+            f"Peak Alloy/s (era)  {fmt(s.p3_peak_rate)}",
             f"Coherence           {fmt(s.p2_coh)}",
             f"Best Coherence gain {fmt(Num.from_json(st.get('best_coh_gain', '0')))}",
             f"Best Seed Points    {fmt(Num.from_json(st.get('best_sp_gain', '0')))}",

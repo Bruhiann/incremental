@@ -51,6 +51,8 @@ def check(cond: G.Cond, s: GameState) -> bool:
         return False
     if cond.converge and s.p2_count < cond.converge:
         return False
+    if cond.overwrite and s.p3_count < cond.overwrite:
+        return False
     return True
 
 
@@ -163,6 +165,13 @@ def collect_mults(s: GameState) -> Mults:
             _apply(m, G.Eff(art["kind"], art.get("target", ""), art["value"]))
     if s.achievements:
         m.glob = m.glob * (Num(G.ACH_GLOBAL_BONUS) ** len(s.achievements))
+    exotics = s.res.get("exotic", ZERO)
+    if exotics > 0:
+        m.glob = m.glob * Num((1.0 + exotics.log10()) ** G.EXOTIC_POWER)
+    for oid, lvl in s.p3_levels.items():
+        ou = G.OVER_BY_ID.get(oid)
+        if ou:
+            _apply(m, ou.effect, int(lvl))
     nanites = s.res.get("nanite", ZERO)
     if nanites > 0:
         # Nanite Mass compounds exponentially, so its bonus is logarithmic:
@@ -219,6 +228,10 @@ def recompute(s: GameState) -> Mults:
         s.flags["autobuy"] = True
     if s.p2_count > 0:
         s.flags["nanites"] = True
+    if s.p3_count > 0:
+        s.flags["exotics"] = True
+    if s.p2_coh_life >= G.P3_UNLOCK_COH or s.p3_count > 0:
+        s.flags["see_overwrite"] = True
     if s.p1_sp_life >= G.P2_UNLOCK_SP or s.p2_count > 0:
         s.flags["see_convergence"] = True
     if len(s.doctrines) >= len(G.DOCTRINE_ROWS):
@@ -582,6 +595,10 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
     s.rates = rates
     if rates["alloy"] > s.run_peak_alloy_rate:
         s.run_peak_alloy_rate = rates["alloy"]
+    # Overwrite Charges are measured against this, and it survives Dispersals
+    # and Convergences so it really is the best engine you have ever built.
+    if rates["alloy"] > s.p3_peak_rate:
+        s.p3_peak_rate = rates["alloy"]
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +686,13 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
             bought_any = True
         if bought_any:
             m = recompute(s)
+
+    if s.has_flag("auto_converge") and auto.get("converge_enabled"):
+        required = p2_required(s)
+        depth = float(auto.get("converge_depth", 2.0) or 2.0)
+        if s.p1_sp_life >= required * Num(10.0**depth):
+            converge(s)
+            return
 
     if s.has_flag("auto_prestige") and auto.get("prestige_enabled"):
         gain = p1_gain(s)
@@ -1210,12 +1234,98 @@ def converge(s: GameState) -> Num:
     return gain
 
 
+# ---------------------------------------------------------------------------
+# Prestige layer 3 - Overwrite
+# ---------------------------------------------------------------------------
+
+def p3_required(s: GameState) -> Num:
+    """Peak Alloy/s needed to Overwrite. Rises steeply with charges held."""
+    return G.P3_REQ_BASE * ((ONE + s.p3_oc_life) ** G.P3_REQ_EXP)
+
+
+def p3_gain_at(s: GameState, peak: Num) -> Num:
+    required = p3_required(s)
+    if peak < required:
+        return ZERO
+    depth = peak.log10() - required.log10()
+    gain = Num(G.P3_BASE) * Num((depth + 1.0) ** G.P3_LOG_EXP)
+    return Num(math.floor(gain.to_float())) if gain.e < 15 else gain
+
+
+def p3_gain(s: GameState) -> Num:
+    return p3_gain_at(s, s.p3_peak_rate)
+
+
+def p3_available(s: GameState) -> bool:
+    return s.p3_peak_rate >= p3_required(s)
+
+
+def p3_visible(s: GameState) -> bool:
+    return s.has_flag("see_overwrite")
+
+
+def overwrite_cost(ou: G.OverUpg, level: int, k: int = 1) -> Num:
+    return bulk_cost(ou.base_cost, ou.cost_growth, level, k)
+
+
+def overwrite_affordable(s: GameState, oid: str) -> int:
+    ou = G.OVER_BY_ID.get(oid)
+    if not ou:
+        return 0
+    level = int(s.p3_levels.get(oid, 0))
+    return min(bulk_affordable(ou.base_cost, ou.cost_growth, level, s.p3_oc),
+               _remaining_levels(level, ou.max_level))
+
+
+def buy_overwrite(s: GameState, oid: str, amount=1) -> int:
+    ou = G.OVER_BY_ID.get(oid)
+    if not ou:
+        return 0
+    level = int(s.p3_levels.get(oid, 0))
+    afford = overwrite_affordable(s, oid)
+    k = afford if amount == "max" else min(int(amount), afford)
+    if k <= 0:
+        return 0
+    cost = overwrite_cost(ou, level, k)
+    if cost > s.p3_oc:
+        k -= 1
+        if k <= 0:
+            return 0
+        cost = overwrite_cost(ou, level, k)
+        if cost > s.p3_oc:
+            return 0
+    s.p3_oc = (s.p3_oc - cost).clamp_min(0)
+    s.p3_levels[oid] = level + k
+    return k
+
+
+def overwrite(s: GameState) -> Num:
+    gain = p3_gain(s)
+    if gain <= 0:
+        return ZERO
+    s.p3_oc = s.p3_oc + gain
+    s.p3_oc_life = s.p3_oc_life + gain
+    s.p3_count += 1
+    s.stats["overwrites"] = s.stats.get("overwrites", 0) + 1
+    if gain > Num.from_json(s.stats.get("best_oc_gain", "0")):
+        s.stats["best_oc_gain"] = gain.to_json()
+
+    _reset_scopes(s, G.LAYER_BY_ID["p3"].wipes)
+    _apply_start_bonuses(s)
+    s.res["exotic"] = s.res.get("exotic", ZERO) + Num(G.NANITE_SEED)
+    s.notice("prestige", f"Overwrite complete. +{fmt(gain)} Charges. "
+                         "The early game is now a floor you start above.")
+    return gain
+
+
 def prestige(s: GameState, layer_id: str = "p1") -> Num:
     layer = G.LAYER_BY_ID.get(layer_id)
     if not layer or not layer.implemented:
         return ZERO
     if layer_id == "p2":
         return converge(s)
+    if layer_id == "p3":
+        return overwrite(s)
     gain = p1_gain(s)
     if gain <= 0:
         return ZERO
@@ -1242,11 +1352,16 @@ def prestige(s: GameState, layer_id: str = "p1") -> Num:
 
 def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
     """Reset by table, never by hand."""
-    # Layer-scoped resources ride out a run reset.
+    # Layer-scoped resources ride out a run reset; era-scoped ones ride out a
+    # Convergence as well.
     carried = {}
     if G.LAYER not in wipes:
         for rid in G.LAYER_RESOURCES:
             carried[rid] = s.res.get(rid, ZERO)
+    if G.COHERE not in wipes:
+        for rid in G.COHERE_RESOURCES:
+            carried[rid] = s.res.get(rid, ZERO)
+    keep_research = s.research if s.has_flag("keep_research") else None
     fresh = GameState()
     for field, scope in RESET_SCOPE.items():
         if scope in wipes:
@@ -1254,6 +1369,8 @@ def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
             setattr(s, field, value.copy() if hasattr(value, "copy") else value)
     for rid, held in carried.items():
         s.res[rid] = held
+    if keep_research is not None:
+        s.research = keep_research
     s.run_start = time.time()
     s.events = []
     s.probes = []
@@ -1272,7 +1389,10 @@ def _apply_start_bonuses(s: GameState) -> None:
     for target, count in m.start_gen.items():
         if count <= 0:
             continue
-        targets = ("E1", "E2", "E3") if target == "E" else (target,)
+        groups = {"E": ("E1", "E2", "E3"),
+                  "EARLY_E": ("E1", "E2", "E3", "E4", "E5"),
+                  "EARLY_R": ("R1", "R2", "R3")}
+        targets = groups.get(target, (target,))
         for gid in targets:
             if gid in s.gens:
                 s.gens[gid] = s.gens[gid] + count

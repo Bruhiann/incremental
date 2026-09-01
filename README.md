@@ -87,7 +87,17 @@ number runs away but the balance does not), **Doctrines** (five rows of three
 mutually exclusive branches, free and re-picked at every Convergence so no choice
 is a permanent regret), **auto-Dispersal**, and an endless Coherence shop.
 
-Every shop — machines, the Seed Grid and the Coherence Nodes — has the same
+**Overwrite** (prestige 3) becomes visible at 150 lifetime Coherence and wipes
+the whole Convergence era — Coherence, the Coherence Nodes and Exotic Matter —
+on top of everything Convergence resets. It is a different *kind* of layer:
+**Overwrite Charges come from your peak Alloy per second, never from a lifetime
+total**, so waiting earns nothing and only a better engine does. Charges buy
+**Floors** — permanent starting states, so a fresh Dispersal begins with hundreds
+of machines already running and the early game stops being something you replay.
+It also unlocks Exotic Matter, the Black Hole Tap, the Hive Ark, a Persistent
+Archive that carries Research through Convergence, and auto-Convergence.
+
+Every shop — machines, the Seed Grid, the Coherence Nodes and the Floors — has the same
 **Buy 1 / 10 / 25 / Max** control, and all of them price bulk purchases with a
 closed-form geometric series rather than a loop.
 
@@ -123,7 +133,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 258 tests, headless
+py -m unittest discover -s tests -t .   # 291 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```

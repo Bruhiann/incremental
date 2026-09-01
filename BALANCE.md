@@ -430,3 +430,54 @@ originally guarded against has not come back.
 That save had consumed **all** the content: every research node, every upgrade,
 every machine. Layer 3 (Overwrite) does not exist yet, and at 17 Convergences
 that is what the player is actually out of.
+
+---
+
+# Prestige layer 3 — Overwrite
+
+Built because the reporting save had consumed all the content: every research
+node, every upgrade, every machine, at 17 Convergences.
+
+## What makes it a different kind of layer
+
+Layers 1 and 2 both pay from a lifetime total, so the answer to "how do I earn
+more?" is ultimately "keep going". **Overwrite Charges come from peak Alloy per
+second**, tracked across the whole Convergence era and untouched by Dispersals or
+Convergences. Idling at a fixed rate earns literally nothing — there is a test
+for exactly that. The only way to earn is to build an engine that has never run
+faster.
+
+What Charges buy are **Floors**: permanent starting states. Ten levels of
+Substrate Cache means every future Dispersal begins with 250 of each of E1-E5
+already running. The early game stops being something you replay at all, which is
+the design doc's stated purpose for this layer.
+
+Also unlocked: Exotic Matter (era-scoped, logarithmic bonus like Nanites), the
+Black Hole Tap, the Hive Ark extending the replication ladder to R5, a Persistent
+Archive that carries Research through Convergence, and auto-Convergence with a
+configurable depth.
+
+## Calibration against the reporting save
+
+| | |
+|---|---|
+| Tab visible at | 150 lifetime Coherence (that save had 244) |
+| Overwrite bar | 1e90 peak Alloy/s (that save was at 1.95e135) |
+| First Overwrite pays | **31 Charges** |
+| Rewritten Constants / Substrate Cache | 2 / 3 Charges, so immediately affordable |
+| Persistent Archive / Standing Convergence Orders | 40 / 60 Charges, the next goals |
+
+## Two bugs found while building it
+
+**`Cond.overwrite` was never checked** — the exact repeat of the `Cond.converge`
+bug, and for the same reason: an unhandled condition field reads as *satisfied*,
+so both Overwrite milestones fired on a brand-new game and handed out a x30
+global multiplier. The guard test from last time listed fields by hand, so a new
+field walked straight past it. It now derives the field list from
+`dataclasses.fields(Cond)` and fails if any field lacks coverage.
+
+**`Num` was serialized with 15 significant digits.** A float64 needs **17** to
+round-trip exactly, so every quantity in the game lost its last mantissa digit on
+each save/load cycle. Found because the smoke test compared a saved value against
+its reload and they differed in the sixteenth digit. Two tests now pin it,
+including 50 consecutive save/load cycles with no drift.

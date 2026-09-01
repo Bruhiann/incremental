@@ -37,6 +37,12 @@ RESET_SCOPE: dict[str, str] = {
     "p1_levels": G.LAYER,
     "p1_sp_life": G.LAYER,     # drives the Convergence bar, so it resets with it
     "doctrines": G.LAYER,      # re-picked from scratch every Convergence
+    # Overwrite clears the Convergence era: its currency, its shop, and the
+    # peak that the next Overwrite is measured against.
+    "p2_coh": G.COHERE,
+    "p2_coh_life": G.COHERE,
+    "p2_levels": G.COHERE,
+    "p3_peak_rate": G.COHERE,
     # everything not listed is PERMANENT
 }
 
@@ -89,6 +95,8 @@ def _default_auto() -> dict[str, Any]:
         "balance": False,
         "prestige_enabled": False,
         "prestige_threshold": 2.0,
+        "converge_enabled": False,
+        "converge_depth": 2.0,
     }
 
 
@@ -130,8 +138,16 @@ class GameState:
         self.p2_count: int = 0
         self.doctrines: dict[int, str] = {}     # row -> chosen doctrine id
 
+        # -- Overwrite (layer 3) ----------------------------------------
+        self.p3_oc: Num = ZERO
+        self.p3_oc_life: Num = ZERO
+        self.p3_levels: dict[str, int] = {}
+        self.p3_count: int = 0
+        # Best Alloy/s reached since the last Overwrite. Charges come from this
+        # rather than from any lifetime total, so waiting cannot earn them.
+        self.p3_peak_rate: Num = ZERO
+
         # Later layers are declared now so saves and resets already know them.
-        self.p3: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
         self.p4: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
         self.p5: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
 
@@ -187,7 +203,12 @@ class GameState:
             "p2_levels": self.p2_levels,
             "p2_count": self.p2_count,
             "doctrines": {str(k): v for k, v in self.doctrines.items()},
-            "p3": self.p3, "p4": self.p4, "p5": self.p5,
+            "p3_oc": self.p3_oc.to_json(),
+            "p3_oc_life": self.p3_oc_life.to_json(),
+            "p3_levels": self.p3_levels,
+            "p3_count": self.p3_count,
+            "p3_peak_rate": self.p3_peak_rate.to_json(),
+            "p4": self.p4, "p5": self.p5,
             "stats": self.stats,
             "settings": self.settings,
             "rng_seed": self.rng_seed,
@@ -242,7 +263,13 @@ class GameState:
         s.p2_count = int(d.get("p2_count") or 0)
         s.doctrines = {int(k): v for k, v in (d.get("doctrines") or {}).items()
                        if v in G.DOCTRINE_BY_ID}
-        for layer in ("p3", "p4", "p5"):
+        s.p3_oc = Num.from_json(d.get("p3_oc"))
+        s.p3_oc_life = Num.from_json(d.get("p3_oc_life"))
+        s.p3_levels = {k: int(v) for k, v in (d.get("p3_levels") or {}).items()
+                       if k in G.OVER_BY_ID}
+        s.p3_count = int(d.get("p3_count") or 0)
+        s.p3_peak_rate = Num.from_json(d.get("p3_peak_rate"))
+        for layer in ("p4", "p5"):
             if isinstance(d.get(layer), dict):
                 getattr(s, layer).update(d[layer])
 

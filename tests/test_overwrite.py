@@ -1,0 +1,336 @@
+"""Prestige layer 3: Overwrite.
+
+Its identity is that Charges come from PEAK Alloy per second, not from any
+lifetime total, and that what they buy are floors — permanent starting states.
+"""
+
+import random
+import unittest
+
+from seed import engine as E
+from seed import gamedata as G
+from seed.bignum import N, Num, ZERO
+from seed.state import RESET_SCOPE, new_game
+
+
+def run(s, seconds, dt=0.1, rng=None):
+    rng = rng or random.Random(5)
+    for _ in range(int(seconds / dt)):
+        E.tick(s, dt, rng)
+
+
+def ready(peak_mult=1.0):
+    """A player deep enough in the Convergence era to Overwrite."""
+    s = new_game()
+    s.p1_count, s.p2_count = 40, 6
+    s.p2_coh = N(400)
+    s.p2_coh_life = N(600)
+    s.p2_levels["c_global"] = 12
+    s.research.add("r_foreman")
+    s.doctrines[1] = "d1_swarm"
+    s.res["nanite"] = N(1e9)
+    s.res["exotic"] = N(1e6)
+    E.recompute(s)
+    s.p3_peak_rate = E.p3_required(s) * Num(peak_mult)
+    return s
+
+
+class TestVisibilityAndGating(unittest.TestCase):
+    def test_hidden_early(self):
+        s = new_game()
+        E.recompute(s)
+        self.assertFalse(E.p3_visible(s))
+        self.assertEqual(E.p3_gain(s), ZERO)
+
+    def test_visible_before_reachable(self):
+        s = new_game()
+        s.p2_coh_life = G.P3_UNLOCK_COH
+        E.recompute(s)
+        self.assertTrue(E.p3_visible(s))
+        self.assertFalse(E.p3_available(s))
+
+    def test_locked_below_the_bar(self):
+        s = ready(peak_mult=0.5)
+        self.assertEqual(E.p3_gain(s), ZERO)
+        self.assertEqual(E.overwrite(s), ZERO)
+        self.assertEqual(s.p3_count, 0)
+
+    def test_exotic_machines_need_an_overwrite(self):
+        s = ready()
+        E.recompute(s)
+        self.assertNotIn("E10", s.unlocked)
+        self.assertNotIn("R5", s.unlocked)
+        E.overwrite(s)
+        E.recompute(s)
+        self.assertTrue(s.has_flag("exotics"))
+        self.assertIn("E10", s.unlocked)
+
+
+class TestChargesComeFromPeak(unittest.TestCase):
+    def test_gain_at_the_bar(self):
+        s = ready()
+        self.assertEqual(E.p3_gain(s).to_float(), G.P3_BASE)
+
+    def test_a_stronger_engine_pays_more(self):
+        s = ready()
+        at_bar = E.p3_gain(s)
+        s.p3_peak_rate = E.p3_required(s) * Num(1e6)
+        self.assertGreater(E.p3_gain(s), at_bar)
+
+    def test_waiting_alone_earns_nothing(self):
+        """The whole point of the layer: idling at a fixed rate adds no peak."""
+        s = ready()
+        before = E.p3_gain(s)
+        run(s, 5.0)
+        self.assertEqual(E.p3_gain(s), before)
+
+    def test_peak_tracks_the_best_rate_reached(self):
+        s = new_game()
+        s.res["ore"] = N(1e12)
+        s.run_life["ore"] = N(1e12)
+        E.recompute(s)
+        for gid in ("E1", "E2", "E3"):
+            E.buy(s, gid, 20)
+        E.recompute(s)
+        E.buy(s, "E5", 10)               # Alloy starts flowing
+        run(s, 1.0)
+        peak = s.p3_peak_rate
+        self.assertGreater(peak, ZERO, "no peak recorded at all")
+        s.res["ore"] = N(1e24)           # fund a strictly better engine
+        E.recompute(s)
+        bought = E.buy(s, "E1", 300) + E.buy(s, "E3", 100)
+        self.assertGreater(bought, 0, "test setup could not afford the upgrade")
+        run(s, 1.0)
+        self.assertGreater(s.p3_peak_rate, peak)
+
+    def test_peak_survives_a_dispersal_and_a_convergence(self):
+        s = ready()
+        peak = s.p3_peak_rate
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        self.assertEqual(s.p3_peak_rate, peak, "a Dispersal reset the era peak")
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertEqual(s.p3_peak_rate, peak, "a Convergence reset the era peak")
+
+    def test_the_bar_rises_with_charges_held(self):
+        s = ready()
+        base = E.p3_required(s)
+        s.p3_oc_life = N(50)
+        self.assertGreater(E.p3_required(s), base * N(100))
+
+    def test_preview_matches_award(self):
+        s = ready(peak_mult=1e4)
+        preview = E.p3_gain(s)
+        self.assertEqual(E.overwrite(s), preview)
+
+
+class TestOverwriteReset(unittest.TestCase):
+    def test_it_wipes_the_convergence_era(self):
+        s = ready(peak_mult=1e3)
+        s.p1_sp = N(9999)
+        s.p1_levels["sg_global"] = 20
+        E.buy(s, "E1", 5)
+        E.overwrite(s)
+        self.assertEqual(s.p2_coh, ZERO)
+        self.assertEqual(s.p2_coh_life, ZERO)
+        self.assertEqual(s.p2_levels, {})
+        self.assertEqual(s.res["exotic"], N(G.NANITE_SEED))
+        self.assertEqual(s.p1_sp, ZERO)
+        self.assertEqual(s.p1_levels, {})
+        self.assertEqual(s.research, set())
+        self.assertEqual(s.doctrines, {})
+        self.assertEqual(s.p3_peak_rate, ZERO)
+
+    def test_it_keeps_identity_and_collections(self):
+        s = ready(peak_mult=1e3)
+        s.milestones.add("m_first_fab")
+        s.achievements.add("a_first_ore")
+        s.artifacts.append({"id": "a1", "name": "x", "kind": G.MULT_GLOBAL,
+                            "target": "", "value": 3.0, "rarity": "epic",
+                            "mutation": "plain", "desc": ""})
+        E.overwrite(s)
+        self.assertEqual(s.p1_count, 40)
+        self.assertEqual(s.p2_count, 6)
+        self.assertIn("m_first_fab", s.milestones)
+        self.assertIn("a_first_ore", s.achievements)
+        self.assertEqual(len(s.artifacts), 1)
+        self.assertGreater(s.p3_oc, ZERO)
+        self.assertEqual(s.p3_count, 1)
+
+    def test_charges_and_floors_survive_later_overwrites(self):
+        s = ready(peak_mult=1e6)
+        E.overwrite(s)
+        s.p3_oc = N(1e6)
+        E.buy_overwrite(s, "ow_global", 5)
+        s.p3_peak_rate = E.p3_required(s) * Num(1e6)
+        E.overwrite(s)
+        self.assertEqual(s.p3_levels["ow_global"], 5)
+        self.assertEqual(s.p3_count, 2)
+
+    def test_no_duplication_on_repeat(self):
+        s = ready(peak_mult=1e3)
+        first = E.overwrite(s)
+        self.assertEqual(E.overwrite(s), ZERO)
+        self.assertEqual(s.p3_oc, first)
+        self.assertEqual(s.p3_count, 1)
+
+    def test_every_cohere_field_is_declared(self):
+        for field in ("p2_coh", "p2_coh_life", "p2_levels", "p3_peak_rate"):
+            self.assertEqual(RESET_SCOPE.get(field), G.COHERE, field)
+
+
+class TestFloors(unittest.TestCase):
+    def test_extraction_floor_applies_at_every_dispersal(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(1e9)
+        E.buy_overwrite(s, "ow_floor_e", 2)      # +50 of E1..E5
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        for gid in ("E1", "E2", "E3", "E4", "E5"):
+            self.assertEqual(s.gens[gid].to_float(), 50.0, gid)
+            self.assertEqual(s.bought[gid].to_float(), 50.0, gid)
+
+    def test_replication_floor_applies(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(1e9)
+        E.buy_overwrite(s, "ow_floor_r", 1)      # +10 of R1..R3
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        for gid in ("R1", "R2", "R3"):
+            self.assertEqual(s.gens[gid].to_float(), 10.0, gid)
+
+    def test_floors_survive_a_convergence(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(1e9)
+        E.buy_overwrite(s, "ow_floor_e", 1)
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertEqual(s.gens["E5"].to_float(), 25.0)
+
+    def test_a_floor_makes_the_restart_immediately_productive(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(1e9)
+        E.buy_overwrite(s, "ow_floor_e", 3)
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        run(s, 1.0)
+        self.assertGreater(s.rates.get("ore", ZERO), ZERO)
+        self.assertGreater(s.rates.get("alloy", ZERO), ZERO)
+
+    def test_persistent_archive_keeps_research_through_convergence(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(1e9)
+        E.buy_overwrite(s, "ow_archive", 1)
+        s.research.add("r_foreman")
+        s.research.add("r_probes")
+        E.recompute(s)
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertIn("r_foreman", s.research)
+        self.assertIn("r_probes", s.research)
+
+    def test_research_is_still_wiped_without_the_archive(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.research.add("r_foreman")
+        E.recompute(s)
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertEqual(s.research, set())
+
+    def test_shop_respects_caps_and_endlessness(self):
+        s = ready(peak_mult=1e6)
+        E.overwrite(s)
+        s.p3_oc = N(1e12)
+        E.buy_overwrite(s, "ow_relic", 99)
+        self.assertEqual(s.p3_levels["ow_relic"], G.OVER_BY_ID["ow_relic"].max_level)
+        E.buy_overwrite(s, "ow_global", 40)
+        self.assertEqual(s.p3_levels["ow_global"], 40)   # endless
+
+    def test_shop_never_overspends(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.p3_oc = N(7)
+        E.buy_overwrite(s, "ow_global", "max")
+        self.assertGreaterEqual(s.p3_oc, ZERO)
+
+    def test_bulk_matches_singles(self):
+        a, b = ready(peak_mult=1e3), ready(peak_mult=1e3)
+        for s in (a, b):
+            E.overwrite(s)
+            s.p3_oc = N(1e9)
+        E.buy_overwrite(a, "ow_global", 12)
+        for _ in range(12):
+            E.buy_overwrite(b, "ow_global", 1)
+        self.assertEqual(a.p3_levels["ow_global"], b.p3_levels["ow_global"])
+        self.assertAlmostEqual(a.p3_oc.log10(), b.p3_oc.log10(), places=6)
+
+
+class TestExotics(unittest.TestCase):
+    def test_overwrite_seeds_them(self):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        self.assertGreater(s.res["exotic"], ZERO)
+
+    def test_their_bonus_is_logarithmic(self):
+        s = ready()
+        s.res["exotic"] = N(1e6)
+        small = E.collect_mults(s).glob
+        s.res["exotic"] = N(1e60)
+        big = E.collect_mults(s).glob
+        self.assertGreater(big, small)
+        self.assertLess(big, small * N(1000))
+
+    def test_they_are_era_scoped(self):
+        """A Dispersal and a Convergence both leave Exotic Matter alone."""
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        s.res["exotic"] = N(1e20)
+        s.run_life["alloy"] = E.p1_required(s)
+        E.prestige(s, "p1")
+        self.assertEqual(s.res["exotic"], N(1e20))
+        s.p1_sp_life = E.p2_required(s)
+        E.converge(s)
+        self.assertEqual(s.res["exotic"], N(1e20))
+
+
+class TestAutoConverge(unittest.TestCase):
+    def _ready(self, unlocked=True):
+        s = ready(peak_mult=1e3)
+        E.overwrite(s)
+        if unlocked:
+            s.p3_levels["ow_autoconv"] = 1
+        s.auto["converge_enabled"] = True
+        s.auto["converge_depth"] = 1.0          # 10x past the bar
+        E.recompute(s)
+        return s
+
+    def test_locked_without_the_node(self):
+        s = self._ready(unlocked=False)
+        s.p1_sp_life = E.p2_required(s) * N(1e6)
+        run(s, 0.5)
+        self.assertEqual(s.p2_count, 6)
+
+    def test_fires_past_the_chosen_depth(self):
+        s = self._ready()
+        before = s.p2_count
+        s.p1_sp_life = E.p2_required(s) * N(1e6)
+        run(s, 0.5)
+        self.assertGreater(s.p2_count, before)
+
+    def test_waits_below_the_chosen_depth(self):
+        s = self._ready()
+        before = s.p2_count
+        s.p1_sp_life = E.p2_required(s)          # exactly at the bar, depth 0
+        run(s, 0.5)
+        self.assertEqual(s.p2_count, before)
+
+
+if __name__ == "__main__":
+    unittest.main()

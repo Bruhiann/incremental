@@ -37,6 +37,9 @@ RESOURCES: tuple[Res, ...] = (
     Res("alloy", "Alloy", STOCK, "Refined structural matter. The currency of the mid game."),
     Res("data", "Data", STOCK, "Telemetry from your machines. Spent on Research."),
     Res("isotope", "Isotopes", STOCK, "Fuel for heavy tiers and deep-space probes."),
+    Res("exotic", "Exotic Matter", STOCK,
+        "Degenerate matter wrung out of a black hole. It powers the deepest "
+        "machines and thickens every number you own."),
     Res("nanite", "Nanite Mass", STOCK,
         "Self-replicating matter. It grows in proportion to how much of it "
         "already exists, so it compounds on its own once seeded."),
@@ -49,6 +52,10 @@ STOCK_RESOURCES = tuple(r.id for r in RESOURCES if r.kind == STOCK)
 # pointless otherwise -- it would reset to nothing every ten minutes and never
 # get the chance to compound.
 LAYER_RESOURCES = ("nanite",)
+
+# Resources belonging to the Convergence ERA: Dispersal and Convergence both
+# leave them alone, an Overwrite clears them.
+COHERE_RESOURCES = ("exotic",)
 
 # ---------------------------------------------------------------------------
 # Unlock conditions
@@ -69,6 +76,7 @@ class Cond:
     upgrade: str | None = None
     prestige: int = 0
     converge: int = 0
+    overwrite: int = 0
     all_of: tuple = ()
     any_of: tuple = ()
 
@@ -184,6 +192,12 @@ GENERATORS: tuple[Gen, ...] = (
         N(1e7), "alloy", 1.16, 9, produces="nanite", base_rate=0.5, draw=5e3,
         unlock=Cond(flag="nanites")),
 
+    Gen("E10", "Black Hole Tap", EXTRACT,
+        "Lowers a shaft past the ergosphere and draws Exotic Matter off the "
+        "spin of a dying star.",
+        N(1e18), "alloy", 1.17, 10, produces="exotic", base_rate=2.0, draw=1e7,
+        unlock=Cond(flag="exotics")),
+
     # -- Replication --------------------------------------------------------
     Gen("R1", "Fabricator Arm", REPLICATE,
         "Builds Regolith Scrapers for free, forever. The first machine that buys "
@@ -204,6 +218,12 @@ GENERATORS: tuple[Gen, ...] = (
         N(2e9), "alloy", 1.19, 4, produces="R3", base_rate=0.010,
         upkeep=("alloy", 8.0),
         unlock=Cond(all_of=(Cond(prestige=3), Cond(gen="R3", count=10)))),
+    Gen("R5", "Hive Ark", REPLICATE,
+        "Builds Seed Ships. A world that exists to launch worlds, paid for in "
+        "matter that should not hold together.",
+        N(1e6), "exotic", 1.20, 5, produces="R4", base_rate=0.008,
+        upkeep=("alloy", 40.0),
+        unlock=Cond(all_of=(Cond(flag="exotics"), Cond(gen="R4", count=10)))),
 )
 GEN_BY_ID = {g.id: g for g in GENERATORS}
 EXTRACT_GENS = tuple(g for g in GENERATORS if g.ladder == EXTRACT)
@@ -471,6 +491,7 @@ SEED_BY_ID = {s.id: s for s in SEED_GRID}
 
 RUN = "run"          # wiped by Dispersal (P1)
 LAYER = "layer"      # wiped by Convergence (P2)
+COHERE = "cohere"    # wiped by Overwrite (P3): Coherence and everything it bought
 PERMANENT = "perm"   # never wiped
 
 
@@ -489,7 +510,8 @@ class Layer:
 LAYERS: tuple[Layer, ...] = (
     Layer("p1", 1, "Dispersal", "Disperse", "sp", "Seed Points", (RUN,), True),
     Layer("p2", 2, "Convergence", "Converge", "coh", "Coherence", (RUN, LAYER), True),
-    Layer("p3", 3, "Overwrite", "Overwrite", "oc", "Overwrite Charges", (RUN, LAYER)),
+    Layer("p3", 3, "Overwrite", "Overwrite", "oc", "Overwrite Charges",
+          (RUN, LAYER, COHERE), True),
     Layer("p4", 4, "Substrate Collapse", "Collapse", "sub", "Substrate", (RUN, LAYER)),
     Layer("p5", 5, "Recursion", "Recurse", "depth", "Recursion Depth", (RUN, LAYER)),
 )
@@ -634,6 +656,72 @@ COHERENCE_GRID: tuple[CohUpg, ...] = (
            6, 1.50, 30, Eff(START_RES, "ore", 100.0)),
 )
 COH_BY_ID = {c.id: c for c in COHERENCE_GRID}
+
+# ---------------------------------------------------------------------------
+# Prestige layer 3 — Overwrite
+# ---------------------------------------------------------------------------
+#
+# Overwrite wipes Coherence and everything it bought, on top of everything
+# Convergence resets.  What makes it a different KIND of layer is the currency:
+# Overwrite Charges come from your PEAK Alloy per second, not from a lifetime
+# total.  Waiting cannot earn them -- only a better engine can.  And what they
+# buy are floors: permanent starting states, so the early game stops being
+# something you replay at all.
+
+P3_UNLOCK_COH = N(150)           # lifetime Coherence needed to SEE the tab
+P3_BASE = 1.0
+P3_LOG_EXP = 0.90
+P3_REQ_BASE = N(1e90)            # peak Alloy/s needed for the first Overwrite
+P3_REQ_EXP = 4.0                 # ...rising steeply with charges already held
+
+# Exotic Matter, like Nanites, is scored logarithmically: the number runs away,
+# the balance does not.
+EXOTIC_POWER = 0.75
+
+
+@dataclass(frozen=True)
+class OverUpg:
+    id: str
+    name: str
+    desc: str
+    base_cost: float
+    cost_growth: float
+    max_level: int          # 0 == endless
+    effect: Eff
+
+
+OVERWRITE_GRID: tuple[OverUpg, ...] = (
+    OverUpg("ow_floor_e", "Substrate Cache",
+            "Begin every Dispersal owning 25 more of each Extraction machine "
+            "E1-E5, per level.", 3, 1.35, 0, Eff(START_GEN, "EARLY_E", 25)),
+    OverUpg("ow_floor_r", "Seeded Swarm",
+            "Begin every Dispersal owning 10 more of each Replication machine "
+            "R1-R3, per level.", 5, 1.40, 0, Eff(START_GEN, "EARLY_R", 10)),
+    OverUpg("ow_global", "Rewritten Constants",
+            "Everything you produce x3, per level.", 2, 1.32, 0,
+            Eff(MULT_GLOBAL, "", 3.0)),
+    OverUpg("ow_sp", "Deep Memory",
+            "Seed Points from every Dispersal x2, per level.", 4, 1.38, 0,
+            Eff(MULT_SP, "", 2.0)),
+    OverUpg("ow_coh", "Resonant Memory",
+            "Coherence from every Convergence x2, per level.", 6, 1.42, 0,
+            Eff(MULT_COH, "", 2.0)),
+    OverUpg("ow_exotic", "Exotic Affinity",
+            "Black Hole Taps yield x5 more Exotic Matter, per level.", 8, 1.40, 0,
+            Eff(MULT_GEN, "E10", 5.0)),
+    OverUpg("ow_cheap", "Overwritten Costs",
+            "All machine costs scale 1% more slowly, per level.", 12, 1.60, 25,
+            Eff(ADD_GROWTH, "*", -0.01)),
+    OverUpg("ow_relic", "Rewritten Frame", "+2 Relic slots per level.",
+            20, 2.00, 5, Eff(ADD_SLOT, "relic", 2)),
+    OverUpg("ow_archive", "Persistent Archive",
+            "Research survives Convergence. You never re-learn anything again.",
+            40, 1.0, 1, Eff(SET_FLAG, "keep_research")),
+    OverUpg("ow_autoconv", "Standing Convergence Orders",
+            "Convergence runs itself at a depth you choose.", 60, 1.0, 1,
+            Eff(SET_FLAG, "auto_converge")),
+)
+OVER_BY_ID = {o.id: o for o in OVERWRITE_GRID}
 
 # ---------------------------------------------------------------------------
 # RNG — anomalies
@@ -892,6 +980,12 @@ MILESTONES: tuple[Milestone, ...] = tuple(
         Milestone("m_five_converge", "Distributed",
                   "Converge five times. All machine costs scale 2% more slowly.",
                   Cond(converge=5), Eff(ADD_GROWTH, "*", -0.02)),
+        Milestone("m_first_overwrite", "Rewritten",
+                  "Overwrite once. Everything produces 2900% more.",
+                  Cond(overwrite=1), Eff(MULT_GLOBAL, "", 30.0)),
+        Milestone("m_five_overwrite", "Palimpsest",
+                  "Overwrite five times. All machine costs scale 3% more slowly.",
+                  Cond(overwrite=5), Eff(ADD_GROWTH, "*", -0.03)),
         Milestone("m_twenty_converge", "Singular",
                   "Converge twenty times. Everything produces 4900% more.",
                   Cond(converge=20), Eff(MULT_GLOBAL, "", 50.0)),
@@ -955,6 +1049,11 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
                 Cond(flag="ach_mutation")),
     Achievement("a_singular", "One Of One", "Recover a Singular relic.",
                 Cond(flag="ach_singular")),
+    Achievement("a_overwrite", "Start Again, Higher", "Overwrite for the first time.",
+                Cond(overwrite=1)),
+    Achievement("a_exotic", "Degenerate", "Hold 1e18 Exotic Matter.",
+                Cond(res="exotic", amount=N(1e18))),
+    Achievement("a_hive", "Ark", "Own a Hive Ark.", Cond(gen="R5", count=1)),
     Achievement("a_fuse_cosmic", "Made, Not Found",
                 "Reach a Cosmic relic by fusing rather than finding one.",
                 Cond(flag="ach_fused_cosmic")),
@@ -979,6 +1078,7 @@ TABS: tuple[Tab, ...] = (
     Tab("exploration", "Exploration", Cond(flag="exploration")),
     Tab("prestige", "Dispersal", Cond(res="alloy", amount=P1_UNLOCK_ALLOY, lifetime=True)),
     Tab("convergence", "Convergence", Cond(flag="see_convergence")),
+    Tab("overwrite", "Overwrite", Cond(flag="see_overwrite")),
     Tab("automation", "Automation", Cond(flag="autobuy")),
     Tab("stats", "Stats"),
 )

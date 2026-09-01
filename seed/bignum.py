@@ -119,7 +119,9 @@ class Num:
     def __str__(self) -> str:
         if self.m == 0.0:
             return "0"
-        return f"{self.m:.15g}e{self.e}"
+        # 17 significant digits is what a float64 needs to round-trip exactly.
+        # At 15 the mantissa loses its last digit on every save/load cycle.
+        return f"{self.m:.17g}e{self.e}"
 
     def __hash__(self) -> int:
         return hash((self.m, self.e))
