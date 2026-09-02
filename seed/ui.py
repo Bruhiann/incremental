@@ -29,6 +29,7 @@ YELLOW = "#c9a227"
 RED = "#c05050"
 VIOLET = "#9a6fd0"
 CRIMSON = "#d8506f"
+CYAN = "#4fd6c8"
 
 F = ("Segoe UI", 9)
 FB = ("Segoe UI", 9, "bold")
@@ -223,6 +224,7 @@ class App:
             "prestige": self._build_prestige,
             "convergence": self._build_convergence,
             "overwrite": self._build_overwrite,
+            "substrate": self._build_substrate,
             "automation": self._build_automation,
             "stats": self._build_stats,
         }
@@ -360,6 +362,8 @@ class App:
             self.state.settings["coh_buy_amount"] = self.coh_amount.get()
         if hasattr(self, "over_amount"):
             self.state.settings["over_buy_amount"] = self.over_amount.get()
+        if hasattr(self, "sub_amount"):
+            self.state.settings["sub_buy_amount"] = self.sub_amount.get()
 
     def manual(self):
         s = self.state
@@ -572,7 +576,7 @@ class App:
 
         tk.Label(inner, text="Later layers", bg=BG, fg=ACCENT, font=FB, anchor="w"
                  ).pack(fill="x", padx=10, pady=(14, 2))
-        for layer in G.LAYERS[3:]:
+        for layer in G.LAYERS[4:]:
             tk.Label(inner, text=f"{layer.name} — {layer.currency_name} — locked",
                      bg=BG2, fg=DIM, font=F, anchor="w", padx=10, pady=6
                      ).pack(fill="x", padx=10, pady=2)
@@ -846,6 +850,108 @@ class App:
             cap = f"/{ou.max_level}" if ou.max_level else ""
             self._shop_button(card, level, cap, cost, "OC", k, can, CRIMSON)
 
+    # -- substrate -------------------------------------------------------
+    def _build_substrate(self, parent):
+        inner = scrollable(parent)
+        top = tk.Frame(inner, bg=BG2)
+        top.pack(fill="x", padx=10, pady=10)
+        tk.Label(top, text="Substrate Collapse", bg=BG2, fg=CYAN, font=FH,
+                 anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        self.p4_body = tk.Label(top, text="", bg=BG2, fg=FG, font=F, anchor="w",
+                                justify="left", wraplength=900)
+        self.p4_body.pack(fill="x", padx=12)
+        self.p4_btn = tk.Button(top, text="Collapse", bg=CYAN, fg="#12151c",
+                                font=FB, relief="flat", cursor="hand2",
+                                padx=20, pady=8, command=self.do_collapse)
+        self.p4_btn.pack(anchor="w", padx=12, pady=10)
+
+        tk.Label(inner,
+                 text="The Lattice - every multiplier you own is already "
+                      "astronomical, so Substrate buys exponents instead",
+                 bg=BG, fg=ACCENT, font=FB, anchor="w", wraplength=900,
+                 justify="left").pack(fill="x", padx=10, pady=(10, 2))
+        self.sub_amount = tk.StringVar(
+            value=self.state.settings.get("sub_buy_amount", "1"))
+        self._amount_strip(inner, self.sub_amount, "Buy")
+        self.sub_cards = {}
+        for su in G.SUBSTRATE_GRID:
+            self.sub_cards[su.id] = self._card(
+                inner, su.name, su.desc, lambda uid=su.id: self._buy_sub(uid))
+
+    def _buy_sub(self, uid):
+        amount = self.sub_amount.get()
+        if E.buy_substrate(self.state, uid,
+                           "max" if amount == "Max" else int(amount)):
+            self.refresh()
+
+    def do_collapse(self):
+        s = self.state
+        gain = E.p4_gain(s)
+        if gain <= 0:
+            return
+        if s.settings.get("confirm_prestige", True):
+            message = (
+                f"Gain {fmt(gain)} Substrate.\n\n"
+                "RESET: everything Overwrite resets, AND your Overwrite\n"
+                "          Charges and every Floor they bought.\n"
+                "KEPT: Substrate and what it buys, artifacts, milestones,\n"
+                "          achievements, and every unlocked tier.\n\n"
+                "Substrate buys EXPONENTS, not multipliers. Collapse now?")
+            if not messagebox.askyesno("Collapse the substrate?", message):
+                return
+        E.collapse(s)
+        saveman.save(s)
+        self.refresh()
+
+    def _refresh_substrate(self):
+        s = self.state
+        gain = E.p4_gain(s)
+        required = E.p4_required(s)
+        exponent = 1.0 + E.collect_mults(s).exponent
+        body = [
+            f"Substrate:  {fmt(s.p4_sub)}      Collapses: {s.p4_count}",
+            f"Lifetime Overwrite Charges:  {fmt(s.p3_oc_life)}   /   "
+            f"{fmt(required)} needed",
+            "",
+            f"Production exponent:  ^{exponent:.4f}",
+            f"Collapse now:  +{fmt(gain)} Substrate",
+        ]
+        if gain > 0:
+            body.append("")
+            body.append("Depth pays here too:")
+            for mult, label in ((100, "100x"), (10_000, "10,000x")):
+                deeper = E.p4_gain_at(s, required * Num(mult))
+                body.append(f"    at {label:>9} the bar  ->  +{fmt(deeper)} Substrate")
+        body += [
+            "",
+            "RESET: everything Overwrite resets, plus Overwrite Charges and",
+            "          every Floor they bought.",
+            "KEPT:  Substrate and what it buys, artifacts, milestones,",
+            "          achievements, and every tier you have unlocked.",
+        ]
+        if gain <= 0:
+            body += ["", f"Needs {fmt(required)} lifetime Overwrite Charges."]
+        self.p4_body.config(text=chr(10).join(body))
+        self.p4_btn.config(state="normal" if gain > 0 else "disabled",
+                           bg=CYAN if gain > 0 else BG3,
+                           fg="#12151c" if gain > 0 else DIM)
+
+        amount = self.sub_amount.get()
+        for su in G.SUBSTRATE_GRID:
+            card = self.sub_cards[su.id]
+            level = int(s.p4_levels.get(su.id, 0))
+            if su.max_level and level >= su.max_level:
+                card["btn"].config(text=f"Maxed ({level})", state="disabled",
+                                   bg=BG3, fg=GREEN)
+                continue
+            afford = E.substrate_affordable(s, su.id)
+            headroom = (su.max_level - level) if su.max_level else E.MAX_BUY
+            k = max(1, afford) if amount == "Max" else min(int(amount), headroom)
+            cost = E.substrate_cost(su, level, k)
+            can = afford > 0 and s.p4_sub >= cost
+            cap = f"/{su.max_level}" if su.max_level else ""
+            self._shop_button(card, level, cap, cost, "Sub", k, can, CYAN)
+
     # -- automation ------------------------------------------------------
     def _build_automation(self, parent):
         inner = scrollable(parent)
@@ -910,6 +1016,27 @@ class App:
         tk.Label(prow, text="x the Seed Points you already hold", bg=BG, fg=DIM,
                  font=F).pack(side="left")
 
+        tk.Label(inner, text="Auto-Overwrite", bg=BG, fg=ACCENT, font=FB,
+                 anchor="w").pack(fill="x", padx=10, pady=(14, 2))
+        self.autoo_var = tk.BooleanVar(
+            value=bool(self.state.auto.get("overwrite_enabled")))
+        self.autoo_cb = tk.Checkbutton(
+            inner, text="Overwrite automatically", variable=self.autoo_var,
+            command=self._autoo_changed, bg=BG, fg=FG, font=F, selectcolor=BG3,
+            activebackground=BG, anchor="w")
+        self.autoo_cb.pack(fill="x", padx=24)
+        orow = tk.Frame(inner, bg=BG)
+        orow.pack(fill="x", padx=24, pady=2)
+        tk.Label(orow, text="when peak Alloy/s reaches 10^", bg=BG, fg=DIM,
+                 font=F).pack(side="left")
+        self.autoo_entry = tk.Entry(orow, bg=BG3, fg=FG, font=FMONO, width=5,
+                                    insertbackground=FG, relief="flat")
+        self.autoo_entry.insert(0, str(self.state.auto.get("overwrite_depth", 2.0)))
+        self.autoo_entry.pack(side="left", padx=6)
+        self.autoo_entry.bind("<FocusOut>", lambda _e: self._autoo_depth())
+        self.autoo_entry.bind("<Return>", lambda _e: self._autoo_depth())
+        tk.Label(orow, text="x past the bar", bg=BG, fg=DIM, font=F).pack(side="left")
+
         tk.Label(inner, text="Auto-Convergence", bg=BG, fg=ACCENT, font=FB,
                  anchor="w").pack(fill="x", padx=10, pady=(14, 2))
         self.autoc_var = tk.BooleanVar(
@@ -949,6 +1076,18 @@ class App:
                                 command=lambda k=key, v=var: self._standing_changed(k, v))
             cb.pack(fill="x", padx=24)
             self.standing[key] = (var, cb, flag)
+
+    def _autoo_changed(self):
+        self.state.auto["overwrite_enabled"] = bool(self.autoo_var.get())
+
+    def _autoo_depth(self):
+        try:
+            value = max(0.0, float(self.autoo_entry.get().strip() or "2"))
+        except ValueError:
+            value = 2.0
+        self.state.auto["overwrite_depth"] = value
+        self.autoo_entry.delete(0, "end")
+        self.autoo_entry.insert(0, f"{value:g}")
 
     def _autoc_changed(self):
         self.state.auto["converge_enabled"] = bool(self.autoc_var.get())
@@ -1105,6 +1244,8 @@ class App:
             self._refresh_convergence()
         elif current == "Overwrite":
             self._refresh_overwrite()
+        elif current == "Substrate":
+            self._refresh_substrate()
         elif current == "Automation":
             self._refresh_automation()
         elif current == "Stats":
@@ -1515,6 +1656,9 @@ class App:
             want = bool(s.auto.get(key))
             if bool(var.get()) != want:
                 var.set(want)
+        want_o = bool(s.auto.get("overwrite_enabled"))
+        if bool(self.autoo_var.get()) != want_o:
+            self.autoo_var.set(want_o)
         want_c = bool(s.auto.get("converge_enabled"))
         if bool(self.autoc_var.get()) != want_c:
             self.autoc_var.set(want_c)
@@ -1547,6 +1691,9 @@ class App:
         ac = "normal" if s.has_flag("auto_converge") else "disabled"
         self.autoc_cb.config(state=ac, fg=FG if ac == "normal" else DIM)
         self.autoc_entry.config(state=ac)
+        ao = "normal" if s.has_flag("auto_overwrite") else "disabled"
+        self.autoo_cb.config(state=ao, fg=FG if ao == "normal" else DIM)
+        self.autoo_entry.config(state=ao)
 
     def _refresh_stats(self):
         s = self.state
@@ -1569,6 +1716,8 @@ class App:
             f"Dispersals          {s.p1_count}",
             f"Convergences        {s.p2_count}",
             f"Overwrites          {s.p3_count}",
+            f"Collapses           {s.p4_count}",
+            f"Substrate           {fmt(s.p4_sub)}",
             f"Overwrite Charges   {fmt(s.p3_oc)}",
             f"Peak Alloy/s (era)  {fmt(s.p3_peak_rate)}",
             f"Coherence           {fmt(s.p2_coh)}",

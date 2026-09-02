@@ -630,3 +630,62 @@ breakdown after a huge purchase.
 So the answer to the question was: auto-buy was working, production was not too
 fast, and the ceiling was simply set for a much smaller game than the one that
 now exists.
+
+---
+
+# Prestige layer 4 — Substrate Collapse, and fixing Overwrite on the way
+
+## The Overwrite runaway
+
+Reported as "I'm basically done with Overwrite". The save showed why: 10
+Overwrites, peak Alloy/s at `3.50e1.30Qa`, and **a next Overwrite paying 40.1
+trillion Charges against a shop whose dearest node cost 50.4 thousand**. Five of
+eleven nodes were already maxed. The layer had no tension left at all.
+
+Cause: gain was `(depth + 1) ** 0.9`, and `depth` is `log10(peak) - log10(bar)`.
+Production up here is hyper-exponential, so depth itself reached 1.3e15 and any
+ordinary power of it produced absurd numbers. The requirement rises
+polynomially with charges held, so it could never catch up.
+
+*Fix:* gain is taken from the **log of the depth** —
+`10 * log10(depth + 10) ** 1.9` — which holds the whole range from a first
+Overwrite to a hyper-exponential one inside a readable band: 16 Charges at depth
+10, 29 at depth 45, 301 at depth 1e6, 1,716 at depth 1e15. Shop prices dropped
+from 1.32-1.60 per level to 1.13-1.30 so gain can keep buying levels. On the
+reporting save the next Overwrite went from **40.1T to 1.90K Charges**, against
+node prices of 61-379 — five to thirty levels per Overwrite.
+
+## The new layer
+
+Collapse wipes the Overwrite era (Charges and every Floor) on top of everything
+Overwrite resets, via a new `OVER` scope. Its verb is different from every layer
+below it: **Substrate buys exponents.** Production is raised to a power.
+
+The honest maths, which the tests pin in both directions: `+e` adds
+`e x log10(multiplier)`. So +0.010 is *worse* than a plain x10 until multipliers
+pass `1e100`, and past that it runs away from them — at 1e400 a single +0.010 is
+worth four hundred x10s. There are two tests, one for each side of that
+crossover, because a layer whose selling point is "exponents beat multipliers"
+should be honest about when that becomes true.
+
+Also in the Lattice: Constant Rewrite (x10 each), Denser Substrate (Charges x3),
+Deep Cache (start with 100 more of E1-E5 per level), Woven Frame (+5 relic
+slots), **Cached Genome** (the Seed Grid survives Convergence) and **Standing
+Overwrite Orders** (auto-Overwrite at a chosen depth).
+
+A related correctness fix: Persistent Archive and Cached Genome carry work
+through the reset *below* them, never through the reset meant to clear their own
+layer. A Collapse wipes the Seed Grid even with Cached Genome bought, and there
+is a test saying so.
+
+## Calibration against the reporting save
+
+| | |
+|---|---|
+| Substrate tab visible at | 5,000 lifetime Charges (that save had 2.85M) |
+| Collapse bar | 20,000 lifetime Charges |
+| First Collapse pays | **49 Substrate** |
+| Which buys | 7 levels of Rewritten Physics -> exponent ^1.014 |
+| Next goals | Cached Genome (40), Standing Overwrite Orders (60) |
+
+Recursion (layer 5) remains scaffolded and empty.

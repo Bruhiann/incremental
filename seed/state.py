@@ -42,6 +42,10 @@ RESET_SCOPE: dict[str, str] = {
     "p2_coh_life": G.COHERE,
     "p2_levels": G.COHERE,
     "p3_peak_rate": G.COHERE,
+    # Substrate Collapse clears the Overwrite era: its Charges and its Floors.
+    "p3_oc": G.OVER,
+    "p3_oc_life": G.OVER,
+    "p3_levels": G.OVER,
     # everything not listed is PERMANENT
 }
 
@@ -97,6 +101,8 @@ def _default_auto() -> dict[str, Any]:
         "prestige_threshold": 2.0,
         "converge_enabled": False,
         "converge_depth": 2.0,
+        "overwrite_enabled": False,
+        "overwrite_depth": 2.0,
     }
 
 
@@ -150,8 +156,13 @@ class GameState:
         # rather than from any lifetime total, so waiting cannot earn them.
         self.p3_peak_rate: Num = ZERO
 
+        # -- Substrate Collapse (layer 4) -------------------------------
+        self.p4_sub: Num = ZERO
+        self.p4_sub_life: Num = ZERO
+        self.p4_levels: dict[str, int] = {}
+        self.p4_count: int = 0
+
         # Later layers are declared now so saves and resets already know them.
-        self.p4: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
         self.p5: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
 
         self.stats: dict[str, Any] = _default_stats()
@@ -211,7 +222,11 @@ class GameState:
             "p3_levels": self.p3_levels,
             "p3_count": self.p3_count,
             "p3_peak_rate": self.p3_peak_rate.to_json(),
-            "p4": self.p4, "p5": self.p5,
+            "p4_sub": self.p4_sub.to_json(),
+            "p4_sub_life": self.p4_sub_life.to_json(),
+            "p4_levels": self.p4_levels,
+            "p4_count": self.p4_count,
+            "p5": self.p5,
             "stats": self.stats,
             "settings": self.settings,
             "rng_seed": self.rng_seed,
@@ -272,7 +287,12 @@ class GameState:
                        if k in G.OVER_BY_ID}
         s.p3_count = int(d.get("p3_count") or 0)
         s.p3_peak_rate = Num.from_json(d.get("p3_peak_rate"))
-        for layer in ("p4", "p5"):
+        s.p4_sub = Num.from_json(d.get("p4_sub"))
+        s.p4_sub_life = Num.from_json(d.get("p4_sub_life"))
+        s.p4_levels = {k: int(v) for k, v in (d.get("p4_levels") or {}).items()
+                       if k in G.SUB_BY_ID}
+        s.p4_count = int(d.get("p4_count") or 0)
+        for layer in ("p5",):
             if isinstance(d.get(layer), dict):
                 getattr(s, layer).update(d[layer])
 

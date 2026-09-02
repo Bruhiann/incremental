@@ -97,7 +97,16 @@ of machines already running and the early game stops being something you replay.
 It also unlocks Exotic Matter, the Black Hole Tap, the Hive Ark, a Persistent
 Archive that carries Research through Convergence, and auto-Convergence.
 
-Every shop — machines, the Seed Grid, the Coherence Nodes and the Floors — has the same
+**Substrate Collapse** (prestige 4) wipes the Overwrite era and changes the verb.
+By here every multiplier you own is astronomical, so another one is noise:
+Substrate buys **exponents**. Production is raised to a power, and +0.002 sounds
+like nothing until you notice it adds `0.002 x log10(your multiplier)` — against
+a multiplier of 1e400 that is worth more than a hundred x10s. The crossover is
+real and the game tells you where it is. It also unlocks a Cached Genome that
+carries the Seed Grid through Convergence, and auto-Overwrite.
+
+Every shop — machines, the Seed Grid, the Coherence Nodes, the Floors and the
+Lattice — has the same
 **Buy 1 / 10 / 25 / Max** control, and all of them price bulk purchases with a
 closed-form geometric series rather than a loop.
 
@@ -133,7 +142,7 @@ does it for you continuously.
 ## Development
 
 ```bash
-py -m unittest discover -s tests -t .   # 333 tests, headless
+py -m unittest discover -s tests -t .   # 366 tests, headless
 py tests/smoke_ui.py                    # builds the real window and drives it
 py -m seed.balance 4                    # simulate 4 hours, print pacing tables
 ```

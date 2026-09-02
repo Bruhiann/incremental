@@ -61,6 +61,8 @@ def check(cond: G.Cond, s: GameState) -> bool:
         return False
     if cond.overwrite and s.p3_count < cond.overwrite:
         return False
+    if cond.collapse and s.p4_count < cond.collapse:
+        return False
     return True
 
 
@@ -76,7 +78,8 @@ def gen_unlocked(s: GameState, gid: str) -> bool:
 class Mults:
     __slots__ = ("gen", "ladder", "res", "glob", "growth", "tenfold", "drop",
                  "sp", "slots", "start_res", "start_gen", "refine", "flags",
-                 "cross", "capture", "autocat", "nanite", "coh")
+                 "cross", "capture", "autocat", "nanite", "coh", "exponent",
+                 "oc")
 
     def __init__(self):
         self.gen: dict[str, Num] = {}
@@ -97,6 +100,8 @@ class Mults:
         self.autocat: float = 1.0
         self.nanite: float = 1.0
         self.coh: float = 1.0
+        self.exponent: float = 0.0
+        self.oc: float = 1.0
 
 
 def _apply(m: Mults, eff: G.Eff, level: int = 1) -> None:
@@ -139,6 +144,10 @@ def _apply(m: Mults, eff: G.Eff, level: int = 1) -> None:
         m.nanite *= v**level
     elif k == G.MULT_COH:
         m.coh *= v**level
+    elif k == G.EXPONENT:
+        m.exponent += v * level
+    elif k == G.MULT_OC:
+        m.oc *= v**level
 
 
 def collect_mults(s: GameState) -> Mults:
@@ -180,6 +189,10 @@ def collect_mults(s: GameState) -> Mults:
         ou = G.OVER_BY_ID.get(oid)
         if ou:
             _apply(m, ou.effect, int(lvl))
+    for uid, lvl in s.p4_levels.items():
+        su = G.SUB_BY_ID.get(uid)
+        if su:
+            _apply(m, su.effect, int(lvl))
     nanites = s.res.get("nanite", ZERO)
     if nanites > 0:
         # Nanite Mass compounds exponentially, so its bonus is logarithmic:
@@ -255,6 +268,10 @@ def recompute(s: GameState) -> Mults:
         s.flags["nanites"] = True
     if s.p3_count > 0:
         s.flags["exotics"] = True
+    if s.p3_oc_life >= G.P4_UNLOCK_OC or s.p4_count > 0:
+        s.flags["see_substrate"] = True
+    if collect_mults(s).exponent >= 0.10:
+        s.perm_flags.add("ach_exponent")
     if s.p2_coh_life >= G.P3_UNLOCK_COH or s.p3_count > 0:
         s.flags["see_overwrite"] = True
     if s.p1_sp_life >= G.P2_UNLOCK_SP or s.p2_count > 0:
@@ -300,6 +317,9 @@ def recompute(s: GameState) -> Mults:
             if cl > 1.0:
                 total = total * Num(cl)
                 parts.append(("Replication", cl))
+        if m.exponent > 0.0 and total > ONE:
+            total = total ** (1.0 + m.exponent)
+            parts.append((f"Substrate exponent (^{1.0 + m.exponent:.4f})", 0.0))
         mults[g.id] = total
         breakdown[g.id] = parts
     s.mults = mults
@@ -749,6 +769,13 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
             bought_any = True
         if bought_any:
             m = recompute(s)
+
+    if s.has_flag("auto_overwrite") and auto.get("overwrite_enabled"):
+        required = p3_required(s)
+        depth = float(auto.get("overwrite_depth", 2.0) or 2.0)
+        if s.p3_peak_rate >= required * Num(10.0**depth):
+            overwrite(s)
+            return
 
     if s.has_flag("auto_converge") and auto.get("converge_enabled"):
         required = p2_required(s)
@@ -1331,7 +1358,11 @@ def p3_gain_at(s: GameState, peak: Num) -> Num:
     if peak < required:
         return ZERO
     depth = peak.log10() - required.log10()
-    gain = Num(G.P3_BASE) * Num((depth + 1.0) ** G.P3_LOG_EXP)
+    # Taken from the log OF the depth: depth itself reaches the quadrillions
+    # once production goes hyper-exponential, and any ordinary power of it
+    # produces trillions of Charges against a shop priced in thousands.
+    gain = Num(G.P3_BASE * collect_mults(s).oc) * Num(
+        math.log10(depth + 10.0) ** G.P3_LOG_EXP)
     return Num(math.floor(gain.to_float())) if gain.e < 15 else gain
 
 
@@ -1401,6 +1432,90 @@ def overwrite(s: GameState) -> Num:
     return gain
 
 
+# ---------------------------------------------------------------------------
+# Prestige layer 4 - Substrate Collapse
+# ---------------------------------------------------------------------------
+
+def p4_required(s: GameState) -> Num:
+    """Lifetime Overwrite Charges needed to Collapse."""
+    return G.P4_REQ_BASE * ((ONE + s.p4_sub_life) ** G.P4_REQ_EXP)
+
+
+def p4_gain_at(s: GameState, lifetime_oc: Num) -> Num:
+    required = p4_required(s)
+    if lifetime_oc < required:
+        return ZERO
+    depth = lifetime_oc.log10() - required.log10()
+    gain = Num(G.P4_BASE) * Num((depth + 1.0) ** G.P4_LOG_EXP)
+    return Num(math.floor(gain.to_float())) if gain.e < 15 else gain
+
+
+def p4_gain(s: GameState) -> Num:
+    return p4_gain_at(s, s.p3_oc_life)
+
+
+def p4_available(s: GameState) -> bool:
+    return s.p3_oc_life >= p4_required(s)
+
+
+def p4_visible(s: GameState) -> bool:
+    return s.has_flag("see_substrate")
+
+
+def substrate_cost(su: G.SubUpg, level: int, k: int = 1) -> Num:
+    return bulk_cost(su.base_cost, su.cost_growth, level, k)
+
+
+def substrate_affordable(s: GameState, uid: str) -> int:
+    su = G.SUB_BY_ID.get(uid)
+    if not su:
+        return 0
+    level = int(s.p4_levels.get(uid, 0))
+    return min(bulk_affordable(su.base_cost, su.cost_growth, level, s.p4_sub),
+               _remaining_levels(level, su.max_level))
+
+
+def buy_substrate(s: GameState, uid: str, amount=1) -> int:
+    su = G.SUB_BY_ID.get(uid)
+    if not su:
+        return 0
+    level = int(s.p4_levels.get(uid, 0))
+    afford = substrate_affordable(s, uid)
+    k = afford if amount == "max" else min(int(amount), afford)
+    if k <= 0:
+        return 0
+    cost = substrate_cost(su, level, k)
+    if cost > s.p4_sub:
+        k -= 1
+        if k <= 0:
+            return 0
+        cost = substrate_cost(su, level, k)
+        if cost > s.p4_sub:
+            return 0
+    s.p4_sub = (s.p4_sub - cost).clamp_min(0)
+    s.p4_levels[uid] = level + k
+    return k
+
+
+def collapse(s: GameState) -> Num:
+    gain = p4_gain(s)
+    if gain <= 0:
+        return ZERO
+    s.p4_sub = s.p4_sub + gain
+    s.p4_sub_life = s.p4_sub_life + gain
+    s.p4_count += 1
+    s.stats["collapses"] = s.stats.get("collapses", 0) + 1
+    if gain > Num.from_json(s.stats.get("best_sub_gain", "0")):
+        s.stats["best_sub_gain"] = gain.to_json()
+
+    _reset_scopes(s, G.LAYER_BY_ID["p4"].wipes)
+    _apply_start_bonuses(s)
+    s.res["exotic"] = s.res.get("exotic", ZERO) + Num(G.NANITE_SEED)
+    s.notice("prestige", f"Substrate Collapse. +{fmt(gain)} Substrate. "
+                         "The rules themselves are yours to edit now.")
+    return gain
+
+
 def prestige(s: GameState, layer_id: str = "p1") -> Num:
     layer = G.LAYER_BY_ID.get(layer_id)
     if not layer or not layer.implemented:
@@ -1409,6 +1524,8 @@ def prestige(s: GameState, layer_id: str = "p1") -> Num:
         return converge(s)
     if layer_id == "p3":
         return overwrite(s)
+    if layer_id == "p4":
+        return collapse(s)
     gain = p1_gain(s)
     if gain <= 0:
         return ZERO
@@ -1444,7 +1561,11 @@ def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
     if G.COHERE not in wipes:
         for rid in G.COHERE_RESOURCES:
             carried[rid] = s.res.get(rid, ZERO)
-    keep_research = s.research if s.has_flag("keep_research") else None
+    # These carry a layer's work through the reset BELOW them, never through
+    # the reset that is supposed to clear that layer.
+    gentle = G.COHERE not in wipes
+    keep_research = s.research if (gentle and s.has_flag("keep_research")) else None
+    keep_seed = s.p1_levels if (gentle and s.has_flag("keep_seed")) else None
     fresh = GameState()
     for field, scope in RESET_SCOPE.items():
         if scope in wipes:
@@ -1454,6 +1575,8 @@ def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
         s.res[rid] = held
     if keep_research is not None:
         s.research = keep_research
+    if keep_seed is not None:
+        s.p1_levels = keep_seed
     s.run_start = time.time()
     s.events = []
     s.probes = []

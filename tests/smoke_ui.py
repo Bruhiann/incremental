@@ -389,6 +389,46 @@ def main():
     app.refresh(); pump(root)
     print(f"  auto-Convergence control: {app.autoc_cb.cget('state')}")
 
+    # --- Substrate Collapse (prestige layer 4) ---------------------------
+    s.p3_oc_life = G.P4_UNLOCK_OC * N(10)
+    E.recompute(s)                      # the tab flag is set during recompute
+    app.refresh(); pump(root)
+    assert "substrate" in app.visible_tabs, app.visible_tabs
+    app.nb.select(app.frames["substrate"])
+    app.refresh(); pump(root)
+
+    s.p3_oc_life = E.p4_required(s) * N(1e4)
+    s.p3_oc = N(500)
+    s.p3_levels["ow_global"] = 12
+    E.recompute(s)
+    app.refresh(); pump(root)
+    sub = E.p4_gain(s)
+    assert sub > ZERO, "Collapse not available in the smoke state"
+    app.do_collapse()
+    pump(root)
+    assert s.p4_count == 1 and s.p4_sub == sub
+    assert s.p3_oc == ZERO and s.p3_levels == {}, "the Overwrite era survived"
+    assert s.p1_count > 0, "Dispersal count must survive"
+    print(f"  collapsed: +{fmt(sub)} Substrate, Overwrite era wiped")
+
+    s.p4_sub = N(1e9)
+    app.sub_amount.set("10")
+    app.refresh(); pump(root)
+    app._buy_sub("sb_exponent")
+    E.recompute(s)
+    exponent = E.collect_mults(s).exponent
+    assert s.p4_levels["sb_exponent"] == 10, s.p4_levels
+    assert abs(exponent - 10 * G.SUBSTRATE_EXP_STEP) < 1e-9, exponent
+    s.gens["E1"] = N(1e6); s.bought["E1"] = N(500)
+    E.recompute(s)
+    labels = [lbl for lbl, _ in s.breakdown["E1"]]
+    assert any("Substrate exponent" in lbl for lbl in labels), labels
+    print(f"  production exponent now ^{1 + exponent:.4f}, shown in the breakdown")
+
+    app.nb.select(app.frames["automation"])
+    app.refresh(); pump(root)
+    print(f"  auto-Overwrite control: {app.autoo_cb.cget('state')}")
+
     # Save/close path.
     app.save_now()
     assert saveman.save_path().exists()

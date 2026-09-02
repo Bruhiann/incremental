@@ -77,6 +77,7 @@ class Cond:
     prestige: int = 0
     converge: int = 0
     overwrite: int = 0
+    collapse: int = 0
     all_of: tuple = ()
     any_of: tuple = ()
 
@@ -105,6 +106,8 @@ MULT_CAPTURE = "mult_capture"  # scales how much of a stream a converter takes
 MULT_AUTOCAT = "mult_autocat"  # scales Autocatalysis
 MULT_NANITE = "mult_nanite"  # scales Nanite Mass self-growth
 MULT_COH = "mult_coh"        # scales Coherence gained from Convergence
+EXPONENT = "exponent"        # raises production to a power: the layer-4 verb
+MULT_OC = "mult_oc"          # scales Overwrite Charges
 
 
 @dataclass(frozen=True)
@@ -496,6 +499,7 @@ SEED_BY_ID = {s.id: s for s in SEED_GRID}
 RUN = "run"          # wiped by Dispersal (P1)
 LAYER = "layer"      # wiped by Convergence (P2)
 COHERE = "cohere"    # wiped by Overwrite (P3): Coherence and everything it bought
+OVER = "over"        # wiped by Substrate Collapse (P4): Charges and the Floors
 PERMANENT = "perm"   # never wiped
 
 
@@ -516,7 +520,8 @@ LAYERS: tuple[Layer, ...] = (
     Layer("p2", 2, "Convergence", "Converge", "coh", "Coherence", (RUN, LAYER), True),
     Layer("p3", 3, "Overwrite", "Overwrite", "oc", "Overwrite Charges",
           (RUN, LAYER, COHERE), True),
-    Layer("p4", 4, "Substrate Collapse", "Collapse", "sub", "Substrate", (RUN, LAYER)),
+    Layer("p4", 4, "Substrate Collapse", "Collapse", "sub", "Substrate",
+          (RUN, LAYER, COHERE, OVER), True),
     Layer("p5", 5, "Recursion", "Recurse", "depth", "Recursion Depth", (RUN, LAYER)),
 )
 LAYER_BY_ID = {l.id: l for l in LAYERS}
@@ -673,8 +678,13 @@ COH_BY_ID = {c.id: c for c in COHERENCE_GRID}
 # something you replay at all.
 
 P3_UNLOCK_COH = N(150)           # lifetime Coherence needed to SEE the tab
-P3_BASE = 1.0
-P3_LOG_EXP = 0.90
+# Production goes hyper-exponential up here: log10(peak Alloy/s) itself reaches
+# the quadrillions. A gain that is any ordinary function of depth therefore runs
+# to 1e13 Charges against a shop priced in thousands. Gain is taken from the
+# log OF the depth, so it stays in a readable band across the whole range, and
+# the shop's prices grow gently enough for it to keep buying levels.
+P3_BASE = 10.0
+P3_LOG_EXP = 1.9
 P3_REQ_BASE = N(1e90)            # peak Alloy/s needed for the first Overwrite
 P3_REQ_EXP = 4.0                 # ...rising steeply with charges already held
 
@@ -697,27 +707,27 @@ class OverUpg:
 OVERWRITE_GRID: tuple[OverUpg, ...] = (
     OverUpg("ow_floor_e", "Substrate Cache",
             "Begin every Dispersal owning 25 more of each Extraction machine "
-            "E1-E5, per level.", 3, 1.35, 0, Eff(START_GEN, "EARLY_E", 25)),
+            "E1-E5, per level.", 3, 1.14, 0, Eff(START_GEN, "EARLY_E", 25)),
     OverUpg("ow_floor_r", "Seeded Swarm",
             "Begin every Dispersal owning 10 more of each Replication machine "
-            "R1-R3, per level.", 5, 1.40, 0, Eff(START_GEN, "EARLY_R", 10)),
+            "R1-R3, per level.", 5, 1.15, 0, Eff(START_GEN, "EARLY_R", 10)),
     OverUpg("ow_global", "Rewritten Constants",
-            "Everything you produce x3, per level.", 2, 1.32, 0,
+            "Everything you produce x3, per level.", 2, 1.13, 0,
             Eff(MULT_GLOBAL, "", 3.0)),
     OverUpg("ow_sp", "Deep Memory",
-            "Seed Points from every Dispersal x2, per level.", 4, 1.38, 0,
+            "Seed Points from every Dispersal x2, per level.", 4, 1.15, 0,
             Eff(MULT_SP, "", 2.0)),
     OverUpg("ow_coh", "Resonant Memory",
-            "Coherence from every Convergence x2, per level.", 6, 1.42, 0,
+            "Coherence from every Convergence x2, per level.", 6, 1.16, 0,
             Eff(MULT_COH, "", 2.0)),
     OverUpg("ow_exotic", "Exotic Affinity",
-            "Black Hole Taps yield x5 more Exotic Matter, per level.", 8, 1.40, 0,
+            "Black Hole Taps yield x5 more Exotic Matter, per level.", 8, 1.16, 0,
             Eff(MULT_GEN, "E10", 5.0)),
     OverUpg("ow_cheap", "Overwritten Costs",
-            "All machine costs scale 1% more slowly, per level.", 12, 1.60, 25,
+            "All machine costs scale 1% more slowly, per level.", 12, 1.30, 40,
             Eff(ADD_GROWTH, "*", -0.01)),
     OverUpg("ow_relic", "Rewritten Frame", "+2 Relic slots per level.",
-            20, 2.00, 5, Eff(ADD_SLOT, "relic", 2)),
+            20, 1.80, 10, Eff(ADD_SLOT, "relic", 2)),
     OverUpg("ow_archive", "Persistent Archive",
             "Research survives Convergence. You never re-learn anything again.",
             40, 1.0, 1, Eff(SET_FLAG, "keep_research")),
@@ -730,6 +740,62 @@ OVERWRITE_GRID: tuple[OverUpg, ...] = (
             Eff(SET_FLAG, "auto_converge")),
 )
 OVER_BY_ID = {o.id: o for o in OVERWRITE_GRID}
+
+# ---------------------------------------------------------------------------
+# Prestige layer 4 — Substrate Collapse
+# ---------------------------------------------------------------------------
+#
+# By here every multiplier in the game is astronomical, so another multiplier is
+# noise.  Substrate buys EXPONENTS instead: production is raised to a power.
+# That is the whole identity of the layer -- you stop building machines and start
+# editing the rules the machines obey.
+
+P4_UNLOCK_OC = N(5_000)          # lifetime Charges needed to SEE the tab
+P4_BASE = 5.0
+P4_LOG_EXP = 2.0
+P4_REQ_BASE = N(20_000)          # lifetime Charges needed to Collapse
+P4_REQ_EXP = 0.80                # ...rising with the Substrate already held
+
+# One level of the exponent node adds this to the power production is raised to.
+# It looks tiny; against a multiplier of 1e12 it is not.
+SUBSTRATE_EXP_STEP = 0.002
+
+
+@dataclass(frozen=True)
+class SubUpg:
+    id: str
+    name: str
+    desc: str
+    base_cost: float
+    cost_growth: float
+    max_level: int          # 0 == endless
+    effect: Eff
+
+
+SUBSTRATE_GRID: tuple[SubUpg, ...] = (
+    SubUpg("sb_exponent", "Rewritten Physics",
+           "Everything you produce is raised to a higher power (+0.002 to the "
+           "exponent per level). Against multipliers this large, nothing else "
+           "comes close.", 3, 1.25, 0, Eff(EXPONENT, "", SUBSTRATE_EXP_STEP)),
+    SubUpg("sb_global", "Constant Rewrite",
+           "Everything you produce x10, per level.", 2, 1.22, 0,
+           Eff(MULT_GLOBAL, "", 10.0)),
+    SubUpg("sb_oc", "Denser Substrate",
+           "Overwrite Charges from every Overwrite x3, per level.", 5, 1.30, 0,
+           Eff(MULT_OC, "", 3.0)),
+    SubUpg("sb_floor", "Deep Cache",
+           "Begin every Dispersal owning 100 more of each of E1-E5, per level.",
+           4, 1.28, 0, Eff(START_GEN, "EARLY_E", 100)),
+    SubUpg("sb_relic", "Woven Frame", "+5 Relic slots per level.",
+           25, 1.60, 10, Eff(ADD_SLOT, "relic", 5)),
+    SubUpg("sb_genome", "Cached Genome",
+           "The Seed Grid survives Convergence. You keep what you bought.",
+           40, 1.0, 1, Eff(SET_FLAG, "keep_seed")),
+    SubUpg("sb_autoover", "Standing Overwrite Orders",
+           "Overwrite runs itself at a depth you choose.", 60, 1.0, 1,
+           Eff(SET_FLAG, "auto_overwrite")),
+)
+SUB_BY_ID = {u.id: u for u in SUBSTRATE_GRID}
 
 # ---------------------------------------------------------------------------
 # RNG — anomalies
@@ -991,6 +1057,9 @@ MILESTONES: tuple[Milestone, ...] = tuple(
         Milestone("m_first_overwrite", "Rewritten",
                   "Overwrite once. Everything produces 2900% more.",
                   Cond(overwrite=1), Eff(MULT_GLOBAL, "", 30.0)),
+        Milestone("m_first_collapse", "New Physics",
+                  "Collapse once. Everything produces 9900% more.",
+                  Cond(collapse=1), Eff(MULT_GLOBAL, "", 100.0)),
         Milestone("m_five_overwrite", "Palimpsest",
                   "Overwrite five times. All machine costs scale 3% more slowly.",
                   Cond(overwrite=5), Eff(ADD_GROWTH, "*", -0.03)),
@@ -1062,6 +1131,10 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("a_exotic", "Degenerate", "Hold 1e18 Exotic Matter.",
                 Cond(res="exotic", amount=N(1e18))),
     Achievement("a_hive", "Ark", "Own a Hive Ark.", Cond(gen="R5", count=1)),
+    Achievement("a_collapse", "Author", "Collapse the substrate for the first time.",
+                Cond(collapse=1)),
+    Achievement("a_exponent", "Above The Line",
+                "Reach a production exponent of 1.10.", Cond(flag="ach_exponent")),
     Achievement("a_fuse_cosmic", "Made, Not Found",
                 "Reach a Cosmic relic by fusing rather than finding one.",
                 Cond(flag="ach_fused_cosmic")),
@@ -1087,6 +1160,7 @@ TABS: tuple[Tab, ...] = (
     Tab("prestige", "Dispersal", Cond(res="alloy", amount=P1_UNLOCK_ALLOY, lifetime=True)),
     Tab("convergence", "Convergence", Cond(flag="see_convergence")),
     Tab("overwrite", "Overwrite", Cond(flag="see_overwrite")),
+    Tab("substrate", "Substrate", Cond(flag="see_substrate")),
     Tab("automation", "Automation", Cond(flag="autobuy")),
     Tab("stats", "Stats"),
 )
