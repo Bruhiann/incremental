@@ -105,6 +105,29 @@ a multiplier of 1e400 that is worth more than a hundred x10s. The crossover is
 real and the game tells you where it is. It also unlocks a Cached Genome that
 carries the Seed Grid through Convergence, and auto-Overwrite.
 
+**Recursion** (prestige 5) wipes the Substrate era — your Substrate, the Lattice
+and everything under it — and changes the verb one last time. The first four
+layers sold you upgrades, choices, floors and exponents. Recursion sells
+**difficulty**: you pick a depth and descend into a deliberately worse copy of
+the universe, because the worse it is, the more it pays.
+
+Depth makes every machine's costs scale harder, and named handicaps stack on top
+as you go deeper — Hungry Machines at 3, Early Defection at 5, Dead Frame at 8,
+Silent Sky at 12, Sterile at 15, Starved at 22, Diminished at 30. Every one of
+them is listed on screen while it is doing it to you. **They hit costs, never
+your exponent**, because production up here is hyper-exponential and a handicap
+on the exponent is not difficulty, it is deletion.
+
+You clear a depth by earning enough Alloy inside it, and the payout scales with
+**how deep you went and how fast you cleared it** — the first mechanic in the
+game that rewards playing rather than waiting. It pays the moment you clear,
+not when you next reset. Depth buys the **Stack**: a Compiled Start, a Retained
+Exponent that carries part of your Substrate through the wipe, a Standing Army
+that carries part of your fleet, Shallow Water that makes every depth a little
+gentler, E11 and R8 at the top of both ladders, and Standing Recursion Orders.
+
+Depth is unbounded. That is the endgame.
+
 ## The Defection
 
 You built self-replicating machines. From your first Overwrite, some of them
@@ -133,8 +156,8 @@ Winning pays salvage, relics pulled out of the wreck, and a permanent global
 multiplier that grows with your war record. The very first incursion is scripted
 and cannot be lost.
 
-Every shop — machines, the Seed Grid, the Coherence Nodes, the Floors and the
-Lattice — has the same
+Every shop — machines, the Seed Grid, the Coherence Nodes, the Floors, the
+Lattice and the Stack — has the same
 **Buy 1 / 10 / 25 / Max** control, and all of them price bulk purchases with a
 closed-form geometric series rather than a loop.
 
@@ -142,8 +165,9 @@ closed-form geometric series rather than a loop.
 → per-machine auto-buy with spending reserves (Foreman research) → auto-Research,
 auto-Upgrades, auto-Relics and auto-Expedition (Seed Grid nodes) → auto-Dispersal
 and auto-Seed-Grid (Coherence nodes) → Standing Defence Orders, which keeps the
-fleet a margin ahead of the next incursion so you stop watching the bar. The Seed
-Grid and Dispersal pair together make the whole
+fleet a margin ahead of the next incursion so you stop watching the bar →
+Standing Recursion Orders, which descends a depth further every time it clears.
+The Seed Grid and Dispersal pair together make the whole
 Dispersal layer hands-off: it resets itself and spends the Seed Points itself. Auto-spending never touches your reserve, whatever it is
 buying, and every automatic purchase goes through the same code path you do.
 

@@ -51,6 +51,16 @@ RESET_SCOPE: dict[str, str] = {
     "p3_oc": G.OVER,
     "p3_oc_life": G.OVER,
     "p3_levels": G.OVER,
+    # Recursion clears the Substrate era: its currency, its Lattice, and the
+    # depth you were standing in. SUB appears in no other layer's wipe list, so
+    # these ride out a Dispersal, a Convergence, an Overwrite and a Collapse.
+    "p4_sub": G.SUB,
+    "p4_sub_life": G.SUB,
+    "p4_levels": G.SUB,
+    "p5_active_depth": G.SUB,
+    "p5_alloy": G.SUB,
+    "p5_run_start": G.SUB,
+    "p5_cleared": G.SUB,
     # everything not listed is PERMANENT
 }
 
@@ -110,6 +120,7 @@ def _default_auto() -> dict[str, Any]:
         "overwrite_depth": 2.0,
         "defence_enabled": False,
         "defence_margin": 2.0,   # keep fleet power this many x the incoming threat
+        "recurse_enabled": False,
     }
 
 
@@ -181,8 +192,19 @@ class GameState:
         self.p4_levels: dict[str, int] = {}
         self.p4_count: int = 0
 
-        # Later layers are declared now so saves and resets already know them.
-        self.p5: dict[str, Any] = {"currency": "0", "count": 0, "unlocked": False}
+        # -- Recursion (layer 5) ----------------------------------------
+        self.p5_depth: Num = ZERO           # banked Recursion Depth
+        self.p5_depth_life: Num = ZERO
+        self.p5_levels: dict[str, int] = {}
+        self.p5_count: int = 0
+        self.p5_best_depth: int = 0
+        # The depth you are currently inside, the Alloy earned since entering
+        # it, and when you entered. All three are SUB-scoped: only a Recursion
+        # clears them, so they ride out every reset beneath.
+        self.p5_active_depth: int = 0
+        self.p5_alloy: Num = ZERO
+        self.p5_run_start: float = 0.0
+        self.p5_cleared: bool = False
 
         self.stats: dict[str, Any] = _default_stats()
         self.settings: dict[str, Any] = _default_settings()
@@ -218,6 +240,10 @@ class GameState:
     def run_time(self) -> float:
         return max(0.0, time.time() - self.run_start) if self.run_start else 0.0
 
+    def depth_time(self) -> float:
+        """Seconds inside the current depth. Drives the speed bonus."""
+        return max(0.0, time.time() - self.p5_run_start) if self.p5_run_start else 0.0
+
     # -- serialization ---------------------------------------------------
     def to_dict(self) -> dict:
         d: dict[str, Any] = {
@@ -245,7 +271,15 @@ class GameState:
             "p4_sub_life": self.p4_sub_life.to_json(),
             "p4_levels": self.p4_levels,
             "p4_count": self.p4_count,
-            "p5": self.p5,
+            "p5_depth": self.p5_depth.to_json(),
+            "p5_depth_life": self.p5_depth_life.to_json(),
+            "p5_levels": self.p5_levels,
+            "p5_count": self.p5_count,
+            "p5_best_depth": self.p5_best_depth,
+            "p5_active_depth": self.p5_active_depth,
+            "p5_alloy": self.p5_alloy.to_json(),
+            "p5_cleared": self.p5_cleared,
+            "p5_elapsed": self.depth_time(),
             "threat": self.threat,
             "incursion": self.incursion,
             "combat_wins": self.combat_wins,
@@ -316,9 +350,18 @@ class GameState:
         s.p4_levels = {k: int(v) for k, v in (d.get("p4_levels") or {}).items()
                        if k in G.SUB_BY_ID}
         s.p4_count = int(d.get("p4_count") or 0)
-        for layer in ("p5",):
-            if isinstance(d.get(layer), dict):
-                getattr(s, layer).update(d[layer])
+        s.p5_depth = Num.from_json(d.get("p5_depth"))
+        s.p5_depth_life = Num.from_json(d.get("p5_depth_life"))
+        s.p5_levels = {k: int(v) for k, v in (d.get("p5_levels") or {}).items()
+                       if k in G.REC_BY_ID}
+        s.p5_count = int(d.get("p5_count") or 0)
+        s.p5_best_depth = int(d.get("p5_best_depth") or 0)
+        s.p5_active_depth = int(d.get("p5_active_depth") or 0)
+        s.p5_alloy = Num.from_json(d.get("p5_alloy"))
+        s.p5_cleared = bool(d.get("p5_cleared"))
+        # Restored as a duration, never as wall-clock credit -- the speed bonus
+        # must not be payable by closing the game and reopening it later.
+        s.p5_run_start = time.time() - max(0.0, float(d.get("p5_elapsed") or 0.0))
 
         s.threat = max(0.0, float(d.get("threat") or 0.0))
         inc = d.get("incursion")

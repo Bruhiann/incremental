@@ -217,6 +217,16 @@ class App:
                                     font=F, anchor="w")
         self.threat_hint.pack(side="left", padx=(10, 0))
 
+        # A handicap the player cannot see is indistinguishable from a bug, so
+        # the depth and everything it is doing to you stays on screen.
+        self.depth_row = tk.Frame(head, bg=BG2)
+        self.depth_label = tk.Label(self.depth_row, text="", bg=BG2, fg=VIOLET,
+                                    font=FB, anchor="w")
+        self.depth_label.pack(side="left")
+        self.depth_hint = tk.Label(self.depth_row, text="", bg=BG2, fg=DIM,
+                                   font=F, anchor="w")
+        self.depth_hint.pack(side="left", padx=(10, 0))
+
         goal = tk.Frame(head, bg=BG2)
         goal.pack(fill="x", padx=12, pady=(2, 8))
         self.goal_label = tk.Label(goal, text="", bg=BG2, fg=ACCENT, font=F, anchor="w")
@@ -237,6 +247,7 @@ class App:
             "convergence": self._build_convergence,
             "overwrite": self._build_overwrite,
             "substrate": self._build_substrate,
+            "recursion": self._build_recursion,
             "automation": self._build_automation,
             "stats": self._build_stats,
         }
@@ -385,6 +396,8 @@ class App:
             self.state.settings["over_buy_amount"] = self.over_amount.get()
         if hasattr(self, "sub_amount"):
             self.state.settings["sub_buy_amount"] = self.sub_amount.get()
+        if hasattr(self, "rec_amount"):
+            self.state.settings["rec_buy_amount"] = self.rec_amount.get()
 
     def manual(self):
         s = self.state
@@ -684,7 +697,7 @@ class App:
 
         tk.Label(inner, text="Later layers", bg=BG, fg=ACCENT, font=FB, anchor="w"
                  ).pack(fill="x", padx=10, pady=(14, 2))
-        for layer in G.LAYERS[4:]:
+        for layer in G.LAYERS[5:]:
             tk.Label(inner, text=f"{layer.name} — {layer.currency_name} — locked",
                      bg=BG2, fg=DIM, font=F, anchor="w", padx=10, pady=6
                      ).pack(fill="x", padx=10, pady=2)
@@ -1060,6 +1073,167 @@ class App:
             cap = f"/{su.max_level}" if su.max_level else ""
             self._shop_button(card, level, cap, cost, "Sub", k, can, CYAN)
 
+    # -- recursion -------------------------------------------------------
+    def _build_recursion(self, parent):
+        inner = scrollable(parent)
+        top = tk.Frame(inner, bg=BG2)
+        top.pack(fill="x", padx=10, pady=10)
+        tk.Label(top, text="Recursion", bg=BG2, fg=VIOLET, font=FH,
+                 anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        self.p5_body = tk.Label(top, text="", bg=BG2, fg=FG, font=F, anchor="w",
+                                justify="left", wraplength=900)
+        self.p5_body.pack(fill="x", padx=12)
+        self.p5_canvas = tk.Canvas(top, height=10, bg=BG3, highlightthickness=0)
+        self.p5_canvas.pack(fill="x", padx=12, pady=(6, 2))
+        self.p5_bar = self.p5_canvas.create_rectangle(0, 0, 0, 10, fill=VIOLET,
+                                                      width=0)
+
+        row = tk.Frame(top, bg=BG2)
+        row.pack(fill="x", padx=12, pady=(6, 12))
+        tk.Label(row, text="Descend to depth", bg=BG2, fg=DIM,
+                 font=F).pack(side="left")
+        self.p5_entry = tk.Entry(row, bg=BG3, fg=FG, font=FMONO, width=6,
+                                 insertbackground=FG, relief="flat")
+        self.p5_entry.pack(side="left", padx=6)
+        self.p5_btn = tk.Button(row, text="Recurse", bg=VIOLET, fg="#12151c",
+                                font=FB, relief="flat", cursor="hand2",
+                                padx=20, pady=6, command=self.do_recurse)
+        self.p5_btn.pack(side="left", padx=8)
+        self.p5_hint = tk.Label(row, text="", bg=BG2, fg=DIM, font=F)
+        self.p5_hint.pack(side="left", padx=(10, 0))
+
+        self.mod_label = tk.Label(inner, text="", bg=BG, fg=CRIMSON, font=F,
+                                  anchor="w", justify="left", wraplength=900)
+        self.mod_label.pack(fill="x", padx=10, pady=(0, 6))
+
+        tk.Label(inner,
+                 text="The Stack — bought once, kept forever, and the only "
+                      "thing a Recursion cannot take",
+                 bg=BG, fg=ACCENT, font=FB, anchor="w", wraplength=900,
+                 justify="left").pack(fill="x", padx=10, pady=(10, 2))
+        self.rec_amount = tk.StringVar(
+            value=self.state.settings.get("rec_buy_amount", "1"))
+        self._amount_strip(inner, self.rec_amount, "Buy")
+        self.rec_cards = {}
+        for ru in G.RECURSION_STACK:
+            self.rec_cards[ru.id] = self._card(
+                inner, ru.name, ru.desc, lambda uid=ru.id: self._buy_rec(uid))
+
+    def _buy_rec(self, uid):
+        amount = self.rec_amount.get()
+        if E.buy_recursion(self.state, uid,
+                           "max" if amount == "Max" else int(amount)):
+            self.refresh()
+
+    def _chosen_depth(self) -> int:
+        try:
+            return max(1, int(self.p5_entry.get().strip()))
+        except ValueError:
+            return max(1, self.state.p5_best_depth + 1)
+
+    def do_recurse(self):
+        s = self.state
+        depth = self._chosen_depth()
+        mods = G.active_mods(depth)
+        if s.settings.get("confirm_prestige", True):
+            lines = [f"Descend to depth {depth}.\n",
+                     f"To clear it you must earn {fmt(E.p5_target(depth))} Alloy "
+                     f"inside the depth, in under {fmt_time(E.p5_par_time(depth))} "
+                     f"for full payment.\n",
+                     "RESET: everything a Collapse resets, AND your Substrate,",
+                     "          the Lattice, and the depth you are in.",
+                     "KEPT: Recursion Depth and the Stack, artifacts, milestones,",
+                     "          achievements, and your war record.\n"]
+            if mods:
+                lines.append("Against you at this depth:")
+                lines += [f"  - {mod.name}: {mod.desc}" for mod in mods]
+                lines.append("")
+            lines.append("Machine costs scale harder the deeper you go. Recurse?")
+            if not messagebox.askyesno("Recurse?", "\n".join(lines)):
+                return
+        E.recurse(s, depth)
+        saveman.save(s)
+        self.refresh()
+
+    def _refresh_recursion(self):
+        s = self.state
+        depth = s.p5_active_depth
+        target = E.p5_target(depth)
+        elapsed = s.depth_time()
+        body = [
+            f"Recursion Depth:  {fmt(s.p5_depth)}      Recursions: {s.p5_count}"
+            f"      Deepest cleared: {s.p5_best_depth}",
+        ]
+        if depth <= 0:
+            body += ["",
+                     "You are at the surface. Nothing is against you, and "
+                     "nothing down here pays.",
+                     "Descend to begin."]
+            frac = 0.0
+        else:
+            body += [
+                "",
+                f"Standing at depth {depth} for {fmt_time(elapsed)}   "
+                f"(par {fmt_time(E.p5_par_time(depth))})",
+                f"Alloy earned here:  {fmt(s.p5_alloy)}  /  {fmt(target)} to clear",
+            ]
+            if s.p5_cleared:
+                body.append("CLEARED. Recurse deeper whenever you like.")
+            else:
+                bonus = E.p5_speed_bonus(depth, max(elapsed, 1.0))
+                body.append(f"Clearing now would pay {fmt(E.p5_gain(s))} Depth "
+                            f"(x{bonus:.2f} for the pace, falling as you sit here).")
+            frac = E.p5_progress(s)
+        body += [
+            "",
+            "Depth pays for speed, not patience:",
+        ]
+        for d in (s.p5_best_depth + 1, s.p5_best_depth + 5, s.p5_best_depth + 20):
+            par = E.p5_par_time(d)
+            body.append(f"    depth {d:<5} needs {fmt(E.p5_target(d)):>10} Alloy   "
+                        f"-> {fmt(E.p5_gain_at(d, par))} at par, "
+                        f"{fmt(E.p5_gain_at(d, par / 20))} if you are fast")
+        self.p5_body.config(text="\n".join(body))
+
+        width = max(1, self.p5_canvas.winfo_width())
+        self.p5_canvas.coords(self.p5_bar, 0, 0, width * frac, 10)
+        self.p5_canvas.itemconfig(self.p5_bar,
+                                  fill=GREEN if s.p5_cleared else VIOLET)
+        if not self.p5_entry.get().strip():
+            self.p5_entry.insert(0, str(s.p5_best_depth + 1))
+        chosen = self._chosen_depth()
+        self.p5_hint.config(
+            text=f"needs {fmt(E.p5_target(chosen))} Alloy · par "
+                 f"{fmt_time(E.p5_par_time(chosen))} · pays up to "
+                 f"{fmt(E.p5_gain_at(chosen, E.p5_par_time(chosen) / 20))}")
+
+        mods = G.active_mods(chosen)
+        if mods:
+            self.mod_label.config(
+                text="At depth %d: " % chosen +
+                     "   ·   ".join(f"{mod.name} — {mod.desc}" for mod in mods))
+        else:
+            nxt = G.RECURSE_MODS[0]
+            self.mod_label.config(
+                text=f"Nothing is against you at depth {chosen}. "
+                     f"{nxt.name} starts at depth {nxt.depth}.")
+
+        amount = self.rec_amount.get()
+        for ru in G.RECURSION_STACK:
+            card = self.rec_cards[ru.id]
+            level = int(s.p5_levels.get(ru.id, 0))
+            if ru.max_level and level >= ru.max_level:
+                card["btn"].config(text=f"Maxed ({level})", state="disabled",
+                                   bg=BG3, fg=GREEN)
+                continue
+            afford = E.recursion_affordable(s, ru.id)
+            headroom = (ru.max_level - level) if ru.max_level else E.MAX_BUY
+            k = max(1, afford) if amount == "Max" else min(int(amount), headroom)
+            cost = E.recursion_cost(ru, level, k)
+            can = afford > 0 and s.p5_depth >= cost
+            cap = f"/{ru.max_level}" if ru.max_level else ""
+            self._shop_button(card, level, cap, cost, "Depth", k, can, VIOLET)
+
     # -- automation ------------------------------------------------------
     def _build_automation(self, parent):
         inner = scrollable(parent)
@@ -1123,6 +1297,16 @@ class App:
         self.autop_entry.bind("<Return>", lambda _e: self._autop_threshold())
         tk.Label(prow, text="x the Seed Points you already hold", bg=BG, fg=DIM,
                  font=F).pack(side="left")
+
+        tk.Label(inner, text="Auto-Recursion", bg=BG, fg=ACCENT, font=FB,
+                 anchor="w").pack(fill="x", padx=10, pady=(14, 2))
+        self.autor_var = tk.BooleanVar(
+            value=bool(self.state.auto.get("recurse_enabled")))
+        self.autor_cb = tk.Checkbutton(
+            inner, text="Descend one depth further every time you clear",
+            variable=self.autor_var, command=self._autor_changed, bg=BG, fg=FG,
+            font=F, selectcolor=BG3, activebackground=BG, anchor="w")
+        self.autor_cb.pack(fill="x", padx=24)
 
         tk.Label(inner, text="Auto-Defence", bg=BG, fg=ACCENT, font=FB,
                  anchor="w").pack(fill="x", padx=10, pady=(14, 2))
@@ -1206,6 +1390,9 @@ class App:
                                 command=lambda k=key, v=var: self._standing_changed(k, v))
             cb.pack(fill="x", padx=24)
             self.standing[key] = (var, cb, flag)
+
+    def _autor_changed(self):
+        self.state.auto["recurse_enabled"] = bool(self.autor_var.get())
 
     def _autod_changed(self):
         self.state.auto["defence_enabled"] = bool(self.autod_var.get())
@@ -1390,6 +1577,8 @@ class App:
             self._refresh_overwrite()
         elif current == "Substrate":
             self._refresh_substrate()
+        elif current == "Recursion":
+            self._refresh_recursion()
         elif current == "Automation":
             self._refresh_automation()
         elif current == "Stats":
@@ -1442,6 +1631,7 @@ class App:
         self.power_canvas.itemconfig(self.power_bar, fill=colour)
 
         self._refresh_threat_strip()
+        self._refresh_depth_strip()
         self.goal_label.config(text="Next: " + self._next_goal())
         saving = "  •  saving…" if self.save_flash > 0 else ""
         self.clock_label.config(
@@ -1490,6 +1680,29 @@ class App:
             self.threat_hint.config(
                 text=f"Fleet {fmt(power)}/s vs {fmt(need)}/s needed — build "
                      f"{self._best_defence_hint()}", fg=YELLOW)
+
+    def _refresh_depth_strip(self):
+        s = self.state
+        depth = s.p5_active_depth
+        if depth <= 0:
+            if is_packed(self.depth_row):
+                self.depth_row.pack_forget()
+            return
+        if not is_packed(self.depth_row):
+            self.depth_row.pack(fill="x", padx=12, pady=(0, 4),
+                                before=self.goal_label.master)
+        pct = 100.0 * E.p5_progress(s)
+        if s.p5_cleared:
+            self.depth_label.config(text=f"Depth {depth} — CLEARED", fg=GREEN)
+            self.depth_hint.config(text="Recurse deeper when you like.")
+            return
+        self.depth_label.config(
+            text=f"Depth {depth} — {fmt(s.p5_alloy)} / "
+                 f"{fmt(E.p5_target(depth))} Alloy ({pct:.1f}%)", fg=VIOLET)
+        mods = G.active_mods(depth)
+        self.depth_hint.config(
+            text=("no handicaps" if not mods else
+                  "against you: " + ", ".join(mod.name for mod in mods)))
 
     def _best_defence_hint(self) -> str:
         """The dearest Defence tier the player has actually unlocked."""
@@ -1865,6 +2078,9 @@ class App:
             want = bool(s.auto.get(key))
             if bool(var.get()) != want:
                 var.set(want)
+        want_r = bool(s.auto.get("recurse_enabled"))
+        if bool(self.autor_var.get()) != want_r:
+            self.autor_var.set(want_r)
         want_d = bool(s.auto.get("defence_enabled"))
         if bool(self.autod_var.get()) != want_d:
             self.autod_var.set(want_d)
@@ -1903,6 +2119,8 @@ class App:
         ac = "normal" if s.has_flag("auto_converge") else "disabled"
         self.autoc_cb.config(state=ac, fg=FG if ac == "normal" else DIM)
         self.autoc_entry.config(state=ac)
+        ar = "normal" if s.has_flag("auto_recurse") else "disabled"
+        self.autor_cb.config(state=ar, fg=FG if ar == "normal" else DIM)
         ad = "normal" if s.has_flag("auto_defence") else "disabled"
         self.autod_cb.config(state=ad, fg=FG if ad == "normal" else DIM)
         self.autod_entry.config(state=ad)
@@ -1936,6 +2154,9 @@ class App:
             f"Machines lost       {fmt(s.combat_lost_units)}",
             f"Collapses           {s.p4_count}",
             f"Substrate           {fmt(s.p4_sub)}",
+            f"Recursions          {s.p5_count}",
+            f"Deepest depth       {s.p5_best_depth}",
+            f"Recursion Depth     {fmt(s.p5_depth)}",
             f"Overwrite Charges   {fmt(s.p3_oc)}",
             f"Peak Alloy/s (era)  {fmt(s.p3_peak_rate)}",
             f"Coherence           {fmt(s.p2_coh)}",

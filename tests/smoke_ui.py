@@ -468,6 +468,66 @@ def main():
     app.refresh(); pump(root)
     print(f"  auto-Defence control: {app.autod_cb.cget('state')}")
 
+    # -- Recursion (prestige layer 5) ------------------------------------
+    s.p4_sub_life = N(1e6)
+    s.p4_sub = N(1e6)
+    s.p4_levels["sb_exponent"] = 30
+    E.recompute(s)
+    app.refresh(); pump(root)
+    assert "recursion" in app.visible_tabs, app.visible_tabs
+    app.nb.select(app.frames["recursion"])
+    app.refresh(); pump(root)
+
+    app.p5_entry.delete(0, "end")
+    app.p5_entry.insert(0, "12")
+    app.do_recurse()
+    pump(root)
+    assert s.p5_active_depth == 12, s.p5_active_depth
+    assert s.p4_sub == ZERO and s.p4_levels == {}, "the Substrate era survived"
+    assert s.p1_count > 0, "permanent progress must survive a Recursion"
+    mods = [m.name for m in G.active_mods(12)]
+    print(f"  recursed to depth 12; Substrate era wiped; against you: {mods}")
+
+    # Clear it and take the payout.
+    s.p5_alloy = E.p5_target(12)
+    E.tick(s, 0.25)
+    app.refresh(); pump(root)
+    assert s.p5_cleared and s.p5_depth > ZERO, (s.p5_cleared, fmt(s.p5_depth))
+    assert s.p5_best_depth == 12
+    print(f"  cleared depth 12 -> +{fmt(s.p5_depth)} Recursion Depth")
+    assert is_packed(app.depth_row), "the depth strip is not on screen"
+    print(f"  header says: {app.depth_label.cget('text')}")
+
+    # The Stack, through the real 1/10/25/Max control.
+    s.p5_depth = N(1e9)
+    for amount, expect in (("1", 1), ("10", 11), ("25", 36)):
+        app.rec_amount.set(amount)
+        app.refresh(); pump(root)
+        app._buy_rec("rc_start")
+        assert s.p5_levels["rc_start"] == expect, (amount, s.p5_levels)
+    app._buy_rec("rc_e11")
+    app._buy_rec("rc_r8")
+    E.recompute(s)
+    assert "E11" in s.unlocked and "R8" in s.unlocked, sorted(s.unlocked)
+    print(f"  stack 1/10/25 -> rc_start={s.p5_levels['rc_start']}; E11 and R8 unlocked")
+
+    # Retained Exponent is the one thing that outlives a Recursion.
+    s.p5_depth = N(1e9)
+    app.rec_amount.set("25")
+    app.refresh(); pump(root)
+    app._buy_rec("rc_exponent")
+    app.p5_entry.delete(0, "end")
+    app.p5_entry.insert(0, "13")
+    app.do_recurse()
+    pump(root)
+    kept = E.collect_mults(s).exponent
+    assert s.p4_levels == {} and kept > 0, (s.p4_levels, kept)
+    print(f"  Retained Exponent held ^{1 + kept:.4f} through the wipe")
+
+    app.nb.select(app.frames["automation"])
+    app.refresh(); pump(root)
+    print(f"  auto-Recursion control: {app.autor_cb.cget('state')}")
+
     # Save/close path.
     app.save_now()
     assert saveman.save_path().exists()

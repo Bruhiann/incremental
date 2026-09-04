@@ -11,7 +11,7 @@ import random
 import time
 
 from . import gamedata as G
-from .bignum import N, Num, ZERO, ONE, fmt
+from .bignum import N, Num, ZERO, ONE, fmt, fmt_time
 from .state import RESET_SCOPE, GameState
 
 MILESTONE_BY_ID = {m.id: m for m in G.MILESTONES}
@@ -63,6 +63,8 @@ def check(cond: G.Cond, s: GameState) -> bool:
         return False
     if cond.collapse and s.p4_count < cond.collapse:
         return False
+    if cond.recurse and s.p5_count < cond.recurse:
+        return False
     return True
 
 
@@ -79,7 +81,7 @@ class Mults:
     __slots__ = ("gen", "ladder", "res", "glob", "growth", "tenfold", "drop",
                  "sp", "slots", "start_res", "start_gen", "refine", "flags",
                  "cross", "capture", "autocat", "nanite", "coh", "exponent",
-                 "oc")
+                 "oc", "sub", "keep_exponent", "keep_fleet", "soften")
 
     def __init__(self):
         self.gen: dict[str, Num] = {}
@@ -102,6 +104,10 @@ class Mults:
         self.coh: float = 1.0
         self.exponent: float = 0.0
         self.oc: float = 1.0
+        self.sub: float = 1.0
+        self.keep_exponent: float = 0.0
+        self.keep_fleet: float = 0.0
+        self.soften: float = 0.0
 
 
 def _apply(m: Mults, eff: G.Eff, level: int = 1) -> None:
@@ -148,6 +154,23 @@ def _apply(m: Mults, eff: G.Eff, level: int = 1) -> None:
         m.exponent += v * level
     elif k == G.MULT_OC:
         m.oc *= v**level
+    elif k == G.MULT_SUB:
+        m.sub *= v**level
+    elif k == G.KEEP_EXPONENT:
+        m.keep_exponent += v * level
+    elif k == G.KEEP_FLEET:
+        m.keep_fleet += v * level
+    elif k == G.SOFTEN:
+        m.soften += v * level
+
+
+def depth_mod(s: GameState, mod_id: str) -> bool:
+    """Is this named handicap active at the depth you are standing in?"""
+    depth = s.p5_active_depth
+    if depth <= 0:
+        return False
+    mod = G.MOD_BY_ID.get(mod_id)
+    return bool(mod) and depth >= mod.depth
 
 
 def collect_mults(s: GameState) -> Mults:
@@ -176,10 +199,12 @@ def collect_mults(s: GameState) -> Mults:
         ms = MILESTONE_BY_ID.get(mid)
         if ms:
             _apply(m, ms.effect)
-    for aid in s.equipped:
-        art = next((a for a in s.artifacts if a.get("id") == aid), None)
-        if art:
-            _apply(m, G.Eff(art["kind"], art.get("target", ""), art["value"]))
+    # Dead Frame (depth 8): the Relic Frame is inert down here.
+    if not depth_mod(s, "norelic"):
+        for aid in s.equipped:
+            art = next((a for a in s.artifacts if a.get("id") == aid), None)
+            if art:
+                _apply(m, G.Eff(art["kind"], art.get("target", ""), art["value"]))
     if s.achievements:
         m.glob = m.glob * (Num(G.ACH_GLOBAL_BONUS) ** len(s.achievements))
     exotics = s.res.get("exotic", ZERO)
@@ -193,6 +218,30 @@ def collect_mults(s: GameState) -> Mults:
         su = G.SUB_BY_ID.get(uid)
         if su:
             _apply(m, su.effect, int(lvl))
+    for uid, lvl in s.p5_levels.items():
+        ru = G.REC_BY_ID.get(uid)
+        if ru:
+            _apply(m, ru.effect, int(lvl))
+    # Retained Exponent is the one thing that survives a Recursion, so it is
+    # added here rather than carried in state: the Lattice is gone, the floor it
+    # left behind is not.
+    if m.keep_exponent > 0.0:
+        m.exponent += m.keep_exponent
+    # -- depth handicaps -------------------------------------------------
+    #
+    # They hit COSTS, never the exponent. Production here is hyper-exponential;
+    # a ^0.9 handicap stacked to depth 40 is ^0.015, which is not difficulty,
+    # it is deletion. Cost growth is the one axis that scales smoothly and that
+    # the player owns real tools against.
+    depth = s.p5_active_depth
+    if depth > 0:
+        step = max(G.RECURSE_GROWTH_FLOOR, G.RECURSE_GROWTH_STEP - m.soften)
+        m.growth["*"] = m.growth.get("*", 0.0) + step * depth
+    mods = {mod.id for mod in G.active_mods(depth)}
+    if "tenfold" in mods:
+        # x1.05 instead of x1.10, expressed as a delta so it composes with
+        # every other tenfold bonus rather than overriding them.
+        m.tenfold["*"] = m.tenfold.get("*", 0.0) - 0.05
     # Every incursion turned back pays into the economy, permanently, so the
     # fleet is not a pure tax on production.  Logarithmic, like everything else
     # here that reads a count: 1,000 clears is x2.5, not x1,000.
@@ -294,6 +343,8 @@ def recompute(s: GameState) -> Mults:
         s.flags["see_combat"] = True
     if s.p3_oc_life >= G.P4_UNLOCK_OC or s.p4_count > 0:
         s.flags["see_substrate"] = True
+    if s.p4_sub_life >= G.P5_UNLOCK_SUB or s.p5_count > 0:
+        s.flags["see_recursion"] = True
     if collect_mults(s).exponent >= 0.10:
         s.perm_flags.add("ach_exponent")
     if s.p2_coh_life >= G.P3_UNLOCK_COH or s.p3_count > 0:
@@ -560,6 +611,7 @@ def tick(s: GameState, dt: float, rng: random.Random | None = None) -> None:
     m = recompute(s)
     _produce(s, dt, m)
     _advance_combat(s, dt, m, rng)
+    _check_depth_clear(s)
     _automate(s, dt, m)
     _roll_anomaly(s, dt, rng)
     _evaluate(s)
@@ -576,9 +628,10 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
         g = G.GEN_BY_ID[gid]
         supply = supply + counts[gid] * Num(g.base_rate) * s.mults[gid]
     demand = ZERO
+    draw_mult = Num(3.0) if depth_mod(s, "draw") else ONE      # Hungry Machines
     for g in G.GENERATORS:
         if g.draw:
-            demand = demand + s.bought.get(g.id, ZERO) * Num(g.draw)
+            demand = demand + s.bought.get(g.id, ZERO) * Num(g.draw) * draw_mult
     s.energy_supply, s.energy_demand = supply, demand
     if demand <= 0:
         throttle = 1.0
@@ -594,7 +647,8 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
     alloy_upkeep = ZERO
     upkeepers = sorted((g for g in G.GENERATORS if g.upkeep and counts[g.id] > 0),
                        key=lambda g: g.tier)
-    needs = [(g, counts[g.id] * Num(g.upkeep[1])) for g in upkeepers]
+    upkeep_mult = Num(10.0) if depth_mod(s, "upkeep") else ONE   # Starved
+    needs = [(g, counts[g.id] * Num(g.upkeep[1]) * upkeep_mult) for g in upkeepers]
     total_need = ZERO
     for _, need in needs:
         total_need = total_need + need
@@ -607,13 +661,21 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
         # while the UI happily displayed a rate for them.
         if (g.produces in G.RES_BY_ID and g.produces != "energy"
                 and not g.consumes and counts[g.id] > 0):
-            rates[g.produces] = rates[g.produces] + (
-                counts[g.id] * Num(g.base_rate) * s.mults[g.id] * thr)
+            made = counts[g.id] * Num(g.base_rate) * s.mults[g.id] * thr
+            rates[g.produces] = rates[g.produces] + made
+            # Side outputs, for machines that yield several things at once.
+            for rid, share in g.extra:
+                if rid in rates:
+                    rates[rid] = rates[rid] + made * Num(share)
 
     # 4. Converters capture a fraction of an input resource's INCOME.  Tying
     #    Alloy to Ore income (rather than a flat per-unit cap) is what keeps the
     #    prestige metric riding the swarm's growth instead of flatlining.
-    alloy_rate = ZERO
+    # Seeded from any direct Alloy already produced above -- step 5 assigns
+    # `rates["alloy"]` outright, so a side output written into it at step 3
+    # would be silently discarded here.
+    alloy_rate = rates.get("alloy", ZERO)
+    rates["alloy"] = ZERO
     for g in G.EXTRACT_GENS:
         if not g.consumes or not g.produces or counts[g.id] <= 0:
             continue
@@ -662,14 +724,17 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
 
     # 6. Replication: machines build machines.
     gen_gain: dict[str, Num] = {}
+    sterile = depth_mod(s, "norep")                              # Sterile
     for g in G.REPLICATE_GENS:
+        if sterile:
+            break
         c = counts[g.id]
         if c <= 0 or not g.produces:
             continue
         eff = Num(upkeep_eff.get(g.id, 1.0))
         rate = c * Num(g.base_rate) * s.mults[g.id] * thr * eff
         gen_gain[g.produces] = gen_gain.get(g.produces, ZERO) + rate
-    if s.has_flag("autocatalysis"):
+    if s.has_flag("autocatalysis") and not sterile:
         # From BOUGHT arms only: total count would compound without bound.
         seed_arms = s.bought.get("R1", ZERO)
         if seed_arms > 0:
@@ -687,6 +752,11 @@ def _produce(s: GameState, dt: float, m: Mults) -> None:
             gained = rate * step
             s.run_life[rid] = s.run_life.get(rid, ZERO) + gained
             s.total_life[rid] = s.total_life.get(rid, ZERO) + gained
+            if rid == "alloy":
+                # Alloy earned since entering this depth. run_life resets every
+                # Dispersal and a Recursion contains many of those, so the clear
+                # condition needs its own SUB-scoped accumulator.
+                s.p5_alloy = s.p5_alloy + gained
     for gid, rate in gen_gain.items():
         s.gens[gid] = s.gens.get(gid, ZERO) + rate * step
 
@@ -840,6 +910,11 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
                 prestige(s, "p1")
                 return
 
+    if (s.has_flag("auto_recurse") and auto.get("recurse_enabled")
+            and s.p5_cleared):
+        recurse(s, s.p5_best_depth + 1)
+        return
+
     if s.has_flag("auto_defence") and auto.get("defence_enabled"):
         # Keep fleet power a chosen margin above what the NEXT incursion will
         # need, buying the dearest tier that is affordable so the fleet climbs
@@ -939,6 +1014,8 @@ def incursion_strength(s: GameState, m: Mults | None = None) -> Num:
         power = Num(k) * Num(g.base_rate) * base * tenfold_factor(g, Num(k), m)
         if power > best:
             best = power
+    if depth_mod(s, "threat"):          # Early Defection
+        best = best * Num(5.0)
     return best
 
 
@@ -1135,6 +1212,8 @@ def _advance_events(s: GameState, dt: float) -> None:
 
 
 def _roll_anomaly(s: GameState, dt: float, rng: random.Random) -> None:
+    if depth_mod(s, "noanom"):          # Silent Sky
+        return
     s.next_event_in -= dt
     if s.next_event_in > 0:
         return
@@ -1730,7 +1809,7 @@ def p4_gain_at(s: GameState, lifetime_oc: Num) -> Num:
 
 
 def p4_gain(s: GameState) -> Num:
-    return p4_gain_at(s, s.p3_oc_life)
+    return p4_gain_at(s, s.p3_oc_life) * Num(collect_mults(s).sub)
 
 
 def p4_available(s: GameState) -> bool:
@@ -1795,6 +1874,161 @@ def collapse(s: GameState) -> Num:
     return gain
 
 
+# ---------------------------------------------------------------------------
+# Prestige layer 5 — Recursion
+# ---------------------------------------------------------------------------
+#
+# You descend into a deliberately worse copy of the universe, because the worse
+# it is, the more it pays.  The payout lands on the CLEAR, not on the reset --
+# the one structural difference from every layer below, and a necessary one:
+# the reward is for the clear.
+
+def p5_target(depth: int) -> Num:
+    """Alloy that must be earned inside a depth to clear it."""
+    if depth <= 0:
+        return ZERO
+    return G.P5_TARGET_BASE * Num.from_exp(G.P5_TARGET_STEP * depth)
+
+
+def p5_par_time(depth: int) -> float:
+    return G.P5_PAR_BASE + G.P5_PAR_STEP * max(0, depth)
+
+
+def p5_speed_bonus(depth: int, seconds: float) -> float:
+    """Rewards a fast clear, and clamps so a one-second clear cannot mint."""
+    if seconds <= 0:
+        return G.P5_SPEED_CAP
+    return max(1.0, min(G.P5_SPEED_CAP, p5_par_time(depth) / seconds))
+
+
+def p5_gain_at(depth: int, seconds: float) -> Num:
+    if depth <= 0:
+        return ZERO
+    raw = (G.P5_BASE * (float(depth) ** G.P5_EXP)
+           * p5_speed_bonus(depth, seconds))
+    return Num(math.floor(raw)) if raw < 1e15 else Num(raw)
+
+
+def p5_gain(s: GameState) -> Num:
+    """What clearing the depth you are standing in would pay, right now."""
+    if s.p5_cleared:
+        return ZERO
+    return p5_gain_at(s.p5_active_depth, s.depth_time())
+
+
+def p5_progress(s: GameState) -> float:
+    target = p5_target(s.p5_active_depth)
+    if target <= 0:
+        return 1.0
+    return min(1.0, max(0.0, (s.p5_alloy / target).to_float()))
+
+
+def p5_visible(s: GameState) -> bool:
+    return s.has_flag("see_recursion")
+
+
+def _check_depth_clear(s: GameState) -> None:
+    """Pay the moment the depth is cleared, not when you next Recurse.
+
+    A layer that only paid on reset would mean the first descent -- which wipes
+    the Substrate era and hands back nothing -- was a pure loss until the player
+    guessed they were allowed to leave.
+    """
+    depth = s.p5_active_depth
+    if depth <= 0 or s.p5_cleared:
+        return
+    if s.p5_alloy < p5_target(depth):
+        return
+    seconds = s.depth_time()
+    gain = p5_gain_at(depth, seconds)
+    s.p5_cleared = True
+    s.p5_depth = s.p5_depth + gain
+    s.p5_depth_life = s.p5_depth_life + gain
+    s.p5_best_depth = max(s.p5_best_depth, depth)
+    if gain > Num.from_json(s.stats.get("best_depth_gain", "0")):
+        s.stats["best_depth_gain"] = gain.to_json()
+    s.notice("prestige",
+             f"Depth {depth} cleared in {fmt_time(seconds)}. "
+             f"+{fmt(gain)} Recursion Depth "
+             f"(x{p5_speed_bonus(depth, seconds):.2f} for the pace). "
+             f"Recurse again to go deeper.")
+
+
+def recursion_cost(ru: G.RecUpg, level: int, k: int = 1) -> Num:
+    return bulk_cost(ru.base_cost, ru.cost_growth, level, k)
+
+
+def recursion_affordable(s: GameState, uid: str) -> int:
+    ru = G.REC_BY_ID.get(uid)
+    if not ru:
+        return 0
+    level = int(s.p5_levels.get(uid, 0))
+    return min(bulk_affordable(ru.base_cost, ru.cost_growth, level, s.p5_depth),
+               _remaining_levels(level, ru.max_level))
+
+
+def buy_recursion(s: GameState, uid: str, amount=1) -> int:
+    ru = G.REC_BY_ID.get(uid)
+    if not ru:
+        return 0
+    level = int(s.p5_levels.get(uid, 0))
+    afford = recursion_affordable(s, uid)
+    k = afford if amount == "max" else min(int(amount), afford)
+    if k <= 0:
+        return 0
+    cost = recursion_cost(ru, level, k)
+    if cost > s.p5_depth:
+        k -= 1
+        if k <= 0:
+            return 0
+        cost = recursion_cost(ru, level, k)
+        if cost > s.p5_depth:
+            return 0
+    s.p5_depth = (s.p5_depth - cost).clamp_min(0)
+    s.p5_levels[uid] = level + k
+    return k
+
+
+def recurse(s: GameState, depth: int) -> Num:
+    """Descend to `depth`. Everything below is wiped, Substrate included."""
+    depth = max(1, int(depth))
+    banked = s.p5_depth
+    _check_depth_clear(s)               # never leave an earned clear unpaid
+    gain = s.p5_depth - banked
+    m = collect_mults(s)
+    # Standing Army: a share of the fleet is rebuilt on the far side. Captured
+    # BEFORE the reset, because the reset is what it is surviving.
+    kept_fleet = {}
+    if m.keep_fleet > 0:
+        share = Num(min(1.0, m.keep_fleet))
+        for g in G.DEFEND_GENS:
+            held = s.gens.get(g.id, ZERO)
+            if held > 0:
+                kept_fleet[g.id] = held * share
+
+    s.p5_count += 1
+    s.stats["recursions"] = s.stats.get("recursions", 0) + 1
+    _reset_scopes(s, G.LAYER_BY_ID["p5"].wipes)
+    s.p5_active_depth = depth
+    s.p5_run_start = time.time()
+    s.p5_alloy = ZERO
+    s.p5_cleared = False
+    _apply_start_bonuses(s)
+    for gid, held in kept_fleet.items():
+        s.gens[gid] = s.gens.get(gid, ZERO) + held
+        s.bought[gid] = s.bought.get(gid, ZERO) + held
+    recompute(s)
+
+    mods = G.active_mods(depth)
+    tail = ("Nothing is against you yet." if not mods else
+            "Against you: " + ", ".join(mod.name for mod in mods) + ".")
+    s.notice("prestige",
+             f"Recursion {s.p5_count}. You are at depth {depth}. Machine costs "
+             f"scale harder here, and {fmt(p5_target(depth))} Alloy gets you "
+             f"out. {tail}")
+    return gain
+
+
 def prestige(s: GameState, layer_id: str = "p1") -> Num:
     layer = G.LAYER_BY_ID.get(layer_id)
     if not layer or not layer.implemented:
@@ -1805,6 +2039,10 @@ def prestige(s: GameState, layer_id: str = "p1") -> Num:
         return overwrite(s)
     if layer_id == "p4":
         return collapse(s)
+    if layer_id == "p5":
+        # No depth given means "one deeper than the deepest you have cleared",
+        # which is what the button offers and what auto-Recursion uses.
+        return recurse(s, s.p5_best_depth + 1)
     gain = p1_gain(s)
     if gain <= 0:
         return ZERO
@@ -1880,7 +2118,9 @@ def _apply_start_bonuses(s: GameState) -> None:
 
 START_GEN_GROUPS = {"E": ("E1", "E2", "E3"),
                     "EARLY_E": ("E1", "E2", "E3", "E4", "E5"),
-                    "EARLY_R": ("R1", "R2", "R3")}
+                    "EARLY_R": ("R1", "R2", "R3"),
+                    "COMPILED": ("E1", "E2", "E3", "E4", "E5",
+                                 "R1", "R2", "R3")}
 
 
 def start_gen_counts(m: Mults) -> dict[str, float]:

@@ -78,6 +78,7 @@ class Cond:
     converge: int = 0
     overwrite: int = 0
     collapse: int = 0
+    recurse: int = 0
     all_of: tuple = ()
     any_of: tuple = ()
 
@@ -108,6 +109,10 @@ MULT_NANITE = "mult_nanite"  # scales Nanite Mass self-growth
 MULT_COH = "mult_coh"        # scales Coherence gained from Convergence
 EXPONENT = "exponent"        # raises production to a power: the layer-4 verb
 MULT_OC = "mult_oc"          # scales Overwrite Charges
+MULT_SUB = "mult_sub"        # scales Substrate gained from a Collapse
+KEEP_EXPONENT = "keep_exp"   # exponent carried through a Recursion, per level
+KEEP_FLEET = "keep_fleet"    # fraction of the fleet carried through a Recursion
+SOFTEN = "soften"            # reduces the per-depth cost handicap: the difficulty dial
 
 
 @dataclass(frozen=True)
@@ -153,6 +158,9 @@ class Gen:
     base_rate: float = 0.0
     # (input resource, fraction of that resource's INCOME captured per unit)
     consumes: tuple[tuple[str, float], ...] = ()
+    # Side outputs: (resource id, share of base_rate). A machine that yields
+    # four things at once is a data question, not an engine special case.
+    extra: tuple[tuple[str, float], ...] = ()
     draw: float = 0.0                # energy demand per unit
     upkeep: tuple[str, float] = ()   # (resource, per unit per second)
     unlock: Cond = ALWAYS
@@ -206,6 +214,13 @@ GENERATORS: tuple[Gen, ...] = (
         N(1e18), "alloy", 1.17, 10, produces="exotic", base_rate=2.0, draw=1e7,
         unlock=Cond(flag="exotics")),
 
+    Gen("E11", "Vacuum Decay Well", EXTRACT,
+        "Nucleates a bubble of lower vacuum and skims the decay products. "
+        "Everything falls out of it: rock, metal, telemetry, fuel.",
+        N(1e30), "alloy", 1.18, 11, produces="ore", base_rate=1e18, draw=1e11,
+        extra=(("alloy", 0.01), ("data", 1e-4), ("isotope", 1e-6)),
+        unlock=Cond(flag="unlock_e11")),
+
     # -- Replication --------------------------------------------------------
     Gen("R1", "Fabricator Arm", REPLICATE,
         "Builds Regolith Scrapers for free, forever. The first machine that buys "
@@ -232,6 +247,12 @@ GENERATORS: tuple[Gen, ...] = (
         N(1e6), "exotic", 1.20, 5, produces="R4", base_rate=0.008,
         upkeep=("alloy", 40.0),
         unlock=Cond(all_of=(Cond(flag="exotics"), Cond(gen="R4", count=10)))),
+    Gen("R8", "Galactic Bloom", REPLICATE,
+        "Builds Hive Arks. Seen from far enough away it is not a machine, it "
+        "is a change in what the galaxy is made of.",
+        N(1e40), "alloy", 1.21, 6, produces="R5", base_rate=0.006,
+        upkeep=("alloy", 200.0),
+        unlock=Cond(flag="unlock_r8")),
 
     # -- Defence ------------------------------------------------------------
     #
@@ -604,6 +625,7 @@ RUN = "run"          # wiped by Dispersal (P1)
 LAYER = "layer"      # wiped by Convergence (P2)
 COHERE = "cohere"    # wiped by Overwrite (P3): Coherence and everything it bought
 OVER = "over"        # wiped by Substrate Collapse (P4): Charges and the Floors
+SUB = "sub"          # wiped by Recursion (P5): Substrate, the Lattice, the depth
 PERMANENT = "perm"   # never wiped
 
 
@@ -626,7 +648,8 @@ LAYERS: tuple[Layer, ...] = (
           (RUN, LAYER, COHERE), True),
     Layer("p4", 4, "Substrate Collapse", "Collapse", "sub", "Substrate",
           (RUN, LAYER, COHERE, OVER), True),
-    Layer("p5", 5, "Recursion", "Recurse", "depth", "Recursion Depth", (RUN, LAYER)),
+    Layer("p5", 5, "Recursion", "Recurse", "depth", "Recursion Depth",
+          (RUN, LAYER, COHERE, OVER, SUB), True),
 )
 LAYER_BY_ID = {l.id: l for l in LAYERS}
 
@@ -907,6 +930,131 @@ SUBSTRATE_GRID: tuple[SubUpg, ...] = (
            Eff(SET_FLAG, "auto_overwrite")),
 )
 SUB_BY_ID = {u.id: u for u in SUBSTRATE_GRID}
+
+# ---------------------------------------------------------------------------
+# Prestige layer 5 — Recursion
+# ---------------------------------------------------------------------------
+#
+# Every layer so far changed the verb: upgrades, then choices, then floors, then
+# exponents.  What is left is the game itself.  Recursion sells DIFFICULTY --
+# you descend into a deliberately worse copy of the universe, because the worse
+# it is, the more it pays.
+#
+# The design doc said Recursion "auto-replays the entire game at compressed
+# speed."  That is a dead idea and it is worth saying why: by here the player
+# owns auto-Dispersal, auto-Convergence, auto-Overwrite, auto-Defence and
+# Standing Orders for three shops.  The game ALREADY replays itself.  A literal
+# replay layer would rename automation they have and make them a spectator.  The
+# payout rule survives -- depth reached x speed of clear -- and the mechanism is
+# thrown away: the compressed replay is the player's own automation, through an
+# early game that the Defection made worth revisiting.
+#
+# This is also the Challenge system the design doc promised at layer 2 and that
+# was never written, arriving at the layer it belongs to.
+
+P5_UNLOCK_SUB = N(250)           # lifetime Substrate needed to SEE the tab
+P5_BASE = 2.0
+P5_EXP = 1.35
+# Requirement exponential in depth, gain mildly polynomial -- the shape that
+# stopped layers 3 and 4 running away.
+P5_TARGET_BASE = N(1e6)          # lifetime Alloy in a Recursion, at depth 0
+P5_TARGET_STEP = 4.0             # ...times 1e4 per depth
+P5_PAR_BASE = 300.0              # par clear time in seconds, at depth 0
+P5_PAR_STEP = 90.0               # ...per depth
+P5_SPEED_CAP = 10.0              # a one-second clear must not mint infinity
+
+# Handicaps hit COSTS, never the exponent.  This is the main balance decision in
+# the layer.  Production here is hyper-exponential; a ^0.9 handicap stacked to
+# depth 40 is ^0.015, which is not difficulty, it is deletion.  Cost growth is
+# the one axis that scales smoothly and that the player owns real tools against.
+RECURSE_GROWTH_STEP = 0.004      # added to every machine's cost growth, per depth
+RECURSE_GROWTH_FLOOR = 0.001     # ...however much Shallow Water is bought
+
+
+@dataclass(frozen=True)
+class RecMod:
+    """A named handicap that switches on at a depth.
+
+    Declarative so the header can print exactly what is being done to you. A
+    handicap the player cannot see is indistinguishable from a bug.
+    """
+    id: str
+    depth: int
+    name: str
+    desc: str
+
+
+RECURSE_MODS: tuple[RecMod, ...] = (
+    RecMod("draw", 3, "Hungry Machines",
+           "Every machine draws three times the power."),
+    RecMod("threat", 5, "Early Defection",
+           "The swarm turns on you five times harder."),
+    RecMod("norelic", 8, "Dead Frame",
+           "Artifacts give nothing. The Relic Frame is inert."),
+    RecMod("noanom", 12, "Silent Sky",
+           "No anomalies. Nothing lucky happens down here."),
+    RecMod("norep", 15, "Sterile",
+           "The Replication ladder is locked. Machines no longer build machines."),
+    RecMod("upkeep", 22, "Starved",
+           "Alloy upkeep is ten times what it was."),
+    RecMod("tenfold", 30, "Diminished",
+           "Every 10 owned gives x1.05 instead of x1.10."),
+)
+
+
+MOD_BY_ID = {mod.id: mod for mod in RECURSE_MODS}
+
+
+def active_mods(depth: int) -> tuple[RecMod, ...]:
+    return tuple(mod for mod in RECURSE_MODS if depth >= mod.depth)
+
+
+@dataclass(frozen=True)
+class RecUpg:
+    id: str
+    name: str
+    desc: str
+    base_cost: float
+    cost_growth: float
+    max_level: int          # 0 == endless
+    effect: Eff
+
+
+RECURSION_STACK: tuple[RecUpg, ...] = (
+    RecUpg("rc_start", "Compiled Start",
+           "Begin every Recursion owning 25 more of each of E1-E5 and R1-R3, "
+           "per level.", 3, 1.24, 0, Eff(START_GEN, "COMPILED", 25)),
+    # The node that stops the Substrate wipe reading as pure loss: depth pays
+    # layer 4 back in layer 4's own currency.
+    RecUpg("rc_exponent", "Retained Exponent",
+           "Keep +0.001 of your Substrate exponent through a Recursion, per "
+           "level. The only thing that survives the wipe.", 6, 1.30, 0,
+           Eff(KEEP_EXPONENT, "", 0.001)),
+    RecUpg("rc_army", "Standing Army",
+           "Keep 10% of your fleet through a Recursion, per level.",
+           6, 1.30, 8, Eff(KEEP_FLEET, "", 0.10)),
+    RecUpg("rc_sub", "Thicker Substrate",
+           "Substrate from every Collapse x3, per level.", 5, 1.28, 0,
+           Eff(MULT_SUB, "", 3.0)),
+    # The difficulty dial. A player at their ceiling buys past it rather than
+    # stalling -- the anti-frustration rule the design has held since day one.
+    RecUpg("rc_shallow", "Shallow Water",
+           "Each depth costs you 0.0005 less in machine cost growth, per level. "
+           "The water gets shallower; you go deeper.", 8, 1.35, 6,
+           Eff(SOFTEN, "", 0.0005)),
+    RecUpg("rc_relic", "Wider Frame", "+10 Relic slots per level.",
+           20, 1.55, 10, Eff(ADD_SLOT, "relic", 10)),
+    RecUpg("rc_e11", "Vacuum Decay Well",
+           "Unlock E11, which pulls Ore, Alloy, Data and Isotopes out of "
+           "nothing at once.", 30, 1.0, 1, Eff(SET_FLAG, "unlock_e11")),
+    RecUpg("rc_r8", "Galactic Bloom",
+           "Unlock R8, the top of the Replication ladder.", 30, 1.0, 1,
+           Eff(SET_FLAG, "unlock_r8")),
+    RecUpg("rc_autorec", "Standing Recursion Orders",
+           "Recursion runs itself, descending one depth further each time it "
+           "clears.", 80, 1.0, 1, Eff(SET_FLAG, "auto_recurse")),
+)
+REC_BY_ID = {u.id: u for u in RECURSION_STACK}
 
 # ---------------------------------------------------------------------------
 # RNG — anomalies
@@ -1289,6 +1437,7 @@ TABS: tuple[Tab, ...] = (
     Tab("convergence", "Convergence", Cond(flag="see_convergence")),
     Tab("overwrite", "Overwrite", Cond(flag="see_overwrite")),
     Tab("substrate", "Substrate", Cond(flag="see_substrate")),
+    Tab("recursion", "Recursion", Cond(flag="see_recursion")),
     Tab("automation", "Automation", Cond(flag="autobuy")),
     Tab("stats", "Stats"),
 )

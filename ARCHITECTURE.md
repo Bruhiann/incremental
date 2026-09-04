@@ -159,6 +159,22 @@ engine.prestige(state, layer):
 `gain_fn` is pure and called every frame to show "gain if you reset now" plus the 10-minute
 projection. Preview and award can never disagree because they are the same function.
 
+Scopes run `RUN → LAYER → COHERE → OVER → SUB → PERMANENT`, each layer wiping every scope
+above its own. `SUB` appears in no wipe list but Recursion's, which is what lets the current
+depth, the Alloy earned inside it and the whole Substrate era ride out a Dispersal, a
+Convergence, an Overwrite and a Collapse alike.
+
+**Recursion is the one layer that pays on the clear rather than on the reset.** `recurse()`
+enters a depth; `_check_depth_clear()` runs every tick and banks the payout the moment the
+depth's Alloy target is met. A layer that only paid on reset would make the first descent —
+which wipes the Substrate era and hands back nothing — a pure loss until the player guessed
+they were allowed to leave.
+
+Depth handicaps are a declarative `RECURSE_MODS` table plus one line in `recompute` that adds
+to `m.growth["*"]`, so the whole difficulty curve flows through `growth_of` into every cost
+path including Buy Max. They deliberately never touch `m.exponent`: production is
+hyper-exponential here, and an exponent handicap is deletion rather than difficulty.
+
 ## 10. Save/load — `saveman.py`
 
 `%LOCALAPPDATA%\SEED\savegame.json` + `savegame_backup.json`, via `os.environ["LOCALAPPDATA"]`

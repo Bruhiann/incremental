@@ -796,3 +796,114 @@ first time by losing half a run has learned the wrong thing.
 
 Two clicks on an endgame save. That is deliberately the mild end for the first
 release of the only system that can take something away.
+
+---
+
+# Prestige layer 5 — Recursion
+
+Every layer so far changed the verb: upgrades, then choices, then floors, then
+exponents. What is left is the game itself. **Recursion sells difficulty** — you
+descend into a deliberately worse copy of the universe, because the worse it is,
+the more it pays.
+
+## The rejected design, and why
+
+The design doc said Recursion "auto-replays the entire game at compressed speed
+to a chosen depth." That is a dead idea, and it is worth writing down why: by
+here the player owns auto-Dispersal, auto-Convergence, auto-Overwrite,
+auto-Defence and Standing Orders for three shops. **The game already replays
+itself.** A literal replay layer would rename automation they have and turn them
+into a spectator watching a gauge, at the cost of a second tick path.
+
+The doc's *payout* rule survives untouched — depth reached x speed of clear. Only
+the mechanism is thrown out: the compressed replay is the player's own
+automation, through an early game that the Defection made worth revisiting.
+
+This is also the **Challenge system** the doc promised at layer 2 and that was
+never written, arriving at the layer where it belongs.
+
+## Handicaps hit costs, never the exponent
+
+The main balance decision in the layer, and the one place this codebase's
+recurring failure was foreseen rather than discovered. Production here is
+hyper-exponential. A `^0.9` handicap stacked to depth 40 is `^0.015` — that is
+not difficulty, it is deletion. Cost growth is the one axis that scales smoothly
+and that the player owns real tools against.
+
+```
+m.growth["*"] += (0.004 - soften) * depth        # floored at 0.001
+```
+
+One line in `recompute`, flowing through `growth_of` into `cost_of`,
+`bulk_cost`, `bulk_affordable`, `max_affordable` and Buy Max. Measured:
+
+| depth | E1 growth | R5 growth |
+|---|---|---|
+| 0 | 1.110 | 1.200 |
+| 10 | 1.150 | 1.240 |
+| 30 | 1.230 | 1.320 |
+| 50 | 1.310 | 1.400 |
+| 100 | 1.510 | 1.600 |
+| 100, Shallow Water x6 | 1.210 | 1.300 |
+
+Named handicaps arrive on top, in a declarative table so the header can print
+them: Hungry Machines (3), Early Defection (5), Dead Frame (8), Silent Sky (12),
+Sterile (15), Starved (22), Diminished (30). A handicap the player cannot see is
+indistinguishable from a bug, so the depth strip lists every active one.
+
+## Payout
+
+```
+target(D) = 1e6 * 1e4**D          Alloy earned INSIDE the depth
+par(D)    = 300 + 90*D  seconds
+speed     = clamp(par/actual, 1, 10)
+gain(D)   = floor(2.0 * D**1.35 * speed)
+```
+
+Requirement exponential in depth, gain mildly polynomial — the shape that stopped
+layers 3 and 4 running away. The speed term is the first mechanic in the game
+that rewards *active* play at the endgame, and it is honest because there is no
+offline progress: `p5_elapsed` is saved as a duration, so closing the game cannot
+buy a speed bonus.
+
+| depth | target | par | pays at par | pays fast |
+|---|---|---|---|---|
+| 1 | 10.0B | 6m 30s | 2 | 20 |
+| 5 | 100Sp | 12m 30s | 17 | 175 |
+| 20 | 1e86 | 35m | 114 | 1.14K |
+| 100 | 1e406 | 2h 35m | 1.00K | 10.0K |
+
+**The payout lands on the clear, not on the reset** — the one structural
+difference from every layer below, and a necessary one. A layer that only paid on
+reset would make the first descent, which wipes the Substrate era and hands back
+nothing, a pure loss until the player guessed they were allowed to leave.
+
+## Two bugs found while building it
+
+**The depth needed its own Alloy accumulator.** `run_life` resets every Dispersal
+and a Recursion contains many of those, so the clear condition reads a SUB-scoped
+`p5_alloy` instead. `SUB` appears in no layer's wipe list but Recursion's, which
+is what makes the depth ride out a Dispersal, a Convergence, an Overwrite and a
+Collapse.
+
+**Side outputs were being discarded.** E11 yields Ore, Alloy, Data and Isotopes
+at once via a new declarative `Gen.extra` field. Step 5 of `_produce` *assigns*
+`rates["alloy"]` outright, so the Alloy written at step 3 vanished. Caught by the
+test that asserted all four resources, not just the headline one.
+
+## The Stack
+
+Compiled Start, **Retained Exponent** (+0.001 of the Substrate exponent survives
+a Recursion, per level — the node that stops the wipe reading as pure loss, since
+depth pays layer 4 back in layer 4's own currency), **Standing Army** (keep 10%
+of the fleet per level), Thicker Substrate, **Shallow Water** (the difficulty
+dial: a player at their ceiling buys past it instead of stalling), Wider Frame,
+**Vacuum Decay Well** (E11) and **Galactic Bloom** (R8), which close out ladders
+that stopped dead at E10 and R5, and Standing Recursion Orders.
+
+## The `Cond` guard, third time lucky
+
+`Cond.converge` and `Cond.overwrite` both shipped unchecked, each granting every
+milestone that used them on a brand new game. The guard test now derives its
+field list from `dataclasses.fields(G.Cond)`, so `Cond.recurse` could not repeat
+it. Verified by deleting the check and watching the test fail.
