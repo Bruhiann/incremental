@@ -193,6 +193,11 @@ def collect_mults(s: GameState) -> Mults:
         su = G.SUB_BY_ID.get(uid)
         if su:
             _apply(m, su.effect, int(lvl))
+    # Every incursion turned back pays into the economy, permanently, so the
+    # fleet is not a pure tax on production.  Logarithmic, like everything else
+    # here that reads a count: 1,000 clears is x2.5, not x1,000.
+    if s.combat_wins > 0:
+        m.glob = m.glob * Num(1.0 + G.COMBAT_WIN_K * math.log10(1.0 + s.combat_wins))
     nanites = s.res.get("nanite", ZERO)
     if nanites > 0:
         # Nanite Mass compounds exponentially, so its bonus is logarithmic:
@@ -241,6 +246,24 @@ def _tenfold_steps(bought: Num) -> float:
     return 1e300            # finite, so pow() stays well defined
 
 
+def _tenfold_step(g: G.Gen, m: Mults) -> float:
+    return 1.0 + G.TENFOLD_BASE + m.tenfold.get(g.id, 0.0) + m.tenfold.get("*", 0.0)
+
+
+def tenfold_factor(g: G.Gen, bought: Num, m: Mults) -> Num:
+    """The per-10 bonus for a given purchased count.
+
+    Split out of `recompute` so the Defection can ask what a hypothetical fleet
+    would be worth.  `s.mults` already folds in the bonus for the count you own,
+    so sizing an incursion against it would ratchet off your own fleet -- buy
+    ships, the demand rises, buy more.
+    """
+    steps = _tenfold_steps(bought)
+    if not steps:
+        return ONE
+    return Num(_tenfold_step(g, m)) ** steps
+
+
 def _cross_ladder(s: GameState, tier: int, k_mult: float = 1.0) -> float:
     """Replication tiers retro-boost Extraction, lower tiers most.
 
@@ -268,6 +291,7 @@ def recompute(s: GameState) -> Mults:
         s.flags["nanites"] = True
     if s.p3_count > 0:
         s.flags["exotics"] = True
+        s.flags["see_combat"] = True
     if s.p3_oc_life >= G.P4_UNLOCK_OC or s.p4_count > 0:
         s.flags["see_substrate"] = True
     if collect_mults(s).exponent >= 0.10:
@@ -306,13 +330,15 @@ def recompute(s: GameState) -> Mults:
                 total = total * rm
                 parts.append(("Resource", rm.to_float()))
         bought = s.bought.get(g.id, ZERO)
-        steps = _tenfold_steps(bought)
-        if steps:
-            step = 1.0 + G.TENFOLD_BASE + m.tenfold.get(g.id, 0.0) + m.tenfold.get("*", 0.0)
-            tf = Num(step) ** steps
+        tf = tenfold_factor(g, bought, m)
+        if tf != ONE:
             total = total * tf
-            parts.append((f"Every 10 owned (x{step:.2f})", tf.to_float()))
-        if g.ladder == G.EXTRACT:
+            parts.append((f"Every 10 owned (x{_tenfold_step(g, m):.2f})", tf.to_float()))
+        # Defence rides the cross-ladder rule too: you are fighting your own
+        # machines, so the tech that builds is the tech that fights.  That is
+        # what keeps neglect a gap rather than a cliff -- the fleet's ceiling
+        # rises with the swarm generating the threat against it.
+        if g.ladder in (G.EXTRACT, G.DEFEND):
             cl = _cross_ladder(s, g.tier, m.cross)
             if cl > 1.0:
                 total = total * Num(cl)
@@ -533,6 +559,7 @@ def tick(s: GameState, dt: float, rng: random.Random | None = None) -> None:
     _advance_probes(s, dt, rng)
     m = recompute(s)
     _produce(s, dt, m)
+    _advance_combat(s, dt, m, rng)
     _automate(s, dt, m)
     _roll_anomaly(s, dt, rng)
     _evaluate(s)
@@ -813,6 +840,18 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
                 prestige(s, "p1")
                 return
 
+    if s.has_flag("auto_defence") and auto.get("defence_enabled"):
+        # Keep fleet power a chosen margin above what the NEXT incursion will
+        # need, buying the dearest tier that is affordable so the fleet climbs
+        # rather than sprawling across D1.
+        margin = max(1.0, float(auto.get("defence_margin", 2.0) or 2.0))
+        want = incursion_strength(s, m) * Num(margin)
+        if fleet_power(s) < want:
+            for g in reversed(G.DEFEND_GENS):
+                if g.id in s.unlocked and buy(s, g.id, AUTOBUY_CAP, m):
+                    m = recompute(s)
+                    break
+
     if s.has_flag("auto_expedition") and auto.get("expedition"):
         while len(s.probes) < probe_slots(s):
             options = [t for t in G.TARGETS
@@ -821,6 +860,246 @@ def _automate(s: GameState, dt: float, m: Mults) -> None:
                 break
             if not launch_probe(s, options[-1].id):
                 break
+
+
+# ---------------------------------------------------------------------------
+# The Defection
+# ---------------------------------------------------------------------------
+#
+# You built self-replicating machines.  Some of them stopped answering.
+#
+# Everything else in this game is monotone -- numbers only go up -- and this is
+# the one system that can take something back.  So every rule below is written
+# to bound what it can take: what it may never touch is a list, the worst case
+# is a constant, and a fight always ends.
+
+def fleet_power(s: GameState) -> Num:
+    """Total damage per second the Defence ladder deals."""
+    total = ZERO
+    for g in G.DEFEND_GENS:
+        count = s.gens.get(g.id, ZERO)
+        if count > 0:
+            total = total + count * Num(g.base_rate) * s.mults.get(g.id, ONE)
+    return total
+
+
+def swarm_count(s: GameState) -> Num:
+    total = ZERO
+    for g in G.REPLICATE_GENS:
+        total = total + s.gens.get(g.id, ZERO)
+    return total
+
+
+def threat_rate(s: GameState) -> float:
+    """Threat per second. Threat is measured in seconds, so this is 1 or 0.
+
+    No swarm, no defectors -- that is the whole condition.  Frequency is a
+    period rather than a function of swarm size because the swarm's size is
+    hyper-exponential: a rate drawn from it reached 5.4e15 per second against a
+    fixed bar on a real save, which is an incursion every tick forever.  The
+    swarm's size drives MAGNITUDE instead, where it belongs.
+    """
+    return 1.0 if swarm_count(s) > 0 else 0.0
+
+
+def incursion_bar(s: GameState) -> float:
+    """Seconds between incursions, stretching with your war record."""
+    return G.INCURSION_PERIOD * (1.0 + s.combat_wins) ** G.PERIOD_GROWTH_EXP
+
+
+def incursion_strength(s: GameState, m: Mults | None = None) -> Num:
+    """Fleet damage per second needed to clear the next incursion on time.
+
+    Measured against what a share of your BANK would buy, not against the
+    swarm.  The swarm is replicated for free and grows hyper-exponentially; a
+    fleet is bought, and cost is exponential in count, so affordable fleet
+    power is only logarithmic in cash.  An incursion sized off the swarm is
+    unwinnable on a deep save by a margin of 1e5e15 -- measured, on a real one.
+
+    Sized this way the demand is always exactly as large as the decision it is
+    meant to pose: park this much of your wealth in machines that produce
+    nothing.  It cannot brick, and it cannot be outgrown.
+    """
+    m = m or collect_mults(s)
+    best = ZERO
+    for g in G.DEFEND_GENS:
+        if g.id not in s.unlocked:
+            continue
+        budget = s.res.get(g.cost_res, ZERO) * Num(G.DEFENCE_SHARE)
+        if budget <= 0:
+            continue
+        # What that budget buys FROM A STANDING START -- the current fleet is
+        # deliberately not part of this, or buying ships would raise the bar.
+        k = _levels_from_ratio(budget.log10() - g.base_cost.log10(),
+                               growth_of(s, g, m))
+        if k <= 0:
+            continue
+        owned = s.bought.get(g.id, ZERO)
+        base = s.mults.get(g.id, ONE) / tenfold_factor(g, owned, m)
+        power = Num(k) * Num(g.base_rate) * base * tenfold_factor(g, Num(k), m)
+        if power > best:
+            best = power
+    return best
+
+
+def _spawn_incursion(s: GameState) -> None:
+    s.threat = 0.0
+    strength = incursion_strength(s)
+    # The first one is scripted and unlosable: it teaches the system instead of
+    # taxing it, so nobody meets combat for the first time by losing half a run.
+    tutorial = s.combat_wins < G.TUTORIAL_INCURSION
+    hp = strength * Num(G.TARGET_FIGHT)
+    s.incursion = {
+        "hp": hp.to_json(),
+        "hp0": hp.to_json(),
+        "strength": strength.to_json(),
+        "elapsed": 0.0,
+        "lost": ZERO.to_json(),
+        "tutorial": tutorial,
+    }
+    if tutorial:
+        s.notice("incursion",
+                 "Part of the swarm has stopped answering. It is coming back. "
+                 "This first one cannot hurt you -- watch what it does.")
+    else:
+        s.notice("incursion",
+                 f"Incursion. Your fleet needs {fmt(strength)} damage/s to turn "
+                 f"it back cleanly; you have {fmt(fleet_power(s))}.")
+
+
+def _eligible_targets(s: GameState, m: Mults) -> list[G.Gen]:
+    """Machines an incursion is allowed to destroy.
+
+    Two exemptions, both of them anti-spiral rather than anti-difficulty:
+
+    Energy generators, for exactly the reason they are never throttled -- losing
+    power capacity mid-fight is a shortage the player cannot buy out of.
+
+    The Defence ladder, because fleet power carries the per-10 bonus and is
+    therefore hyper-exponential in count: an 11% loss of hulls more than halves
+    fleet damage, which loses the fight, which costs more hulls.  Measured, not
+    assumed -- a fleet sized at exactly the stated requirement lost to itself
+    before this exemption existed, which also made the requirement printed in
+    the header a lie.  An incursion takes your economy, never your guns.
+    """
+    floors = start_gen_counts(m)
+    out = []
+    for g in G.GENERATORS:
+        if g.id in G.ENERGY_GENS or g.ladder == G.DEFEND:
+            continue
+        held = s.gens.get(g.id, ZERO)
+        if held > Num(floors.get(g.id, 0.0)):
+            out.append(g)
+    return out
+
+
+def _destroy_machines(s: GameState, fraction: float, m: Mults) -> Num:
+    """Attrition. Returns how many units were lost, in total.
+
+    Two rules that are not negotiable and are pinned by tests:
+
+    1. `gens` and `bought` fall by the SAME count.  The split exists because
+       units the player never bought once caused an unbounded runaway; cutting
+       only `gens` re-creates that inverted, and cutting only `bought` hands out
+       free production.  Taking both means a loss costs time, not money --
+       costs fall with `bought`, so rebuilding is cheap.
+    2. Nothing goes below the floor the player's Overwrite and Substrate levels
+       grant them.  A floor that combat can eat is not a floor.
+    """
+    if fraction <= 0:
+        return ZERO
+    floors = start_gen_counts(m)
+    lost_total = ZERO
+    for g in _eligible_targets(s, m):
+        # Bigger machines are harder to kill.  The cheap tiers absorb the
+        # damage, which is what attrition means and where a rebuild is cheapest.
+        share = fraction / (1.0 + G.TIER_TOUGHNESS * (g.tier - 1))
+        held = s.gens.get(g.id, ZERO)
+        floor = Num(floors.get(g.id, 0.0))
+        lost = held * Num(min(1.0, share))
+        if held - lost < floor:
+            lost = (held - floor).clamp_min(0)
+        if lost <= 0:
+            continue
+        s.gens[g.id] = (held - lost).clamp_min(0)
+        s.bought[g.id] = (s.bought.get(g.id, ZERO) - lost).clamp_min(0)
+        lost_total = lost_total + lost
+    return lost_total
+
+
+def _win_incursion(s: GameState, inc: dict, rng: random.Random) -> None:
+    s.combat_wins += 1
+    s.incursion = None
+    lost = Num.from_json(inc.get("lost"))
+    s.perm_flags.add("combat_1")
+    for n in (10, 100, 1000):
+        if s.combat_wins >= n:
+            s.perm_flags.add(f"combat_{n}")
+    if lost <= 0:
+        s.perm_flags.add("combat_flawless")
+
+    salvage = (s.rates.get("alloy", ZERO) * Num(G.SALVAGE_SECONDS)).max(
+        Num.from_json(inc.get("strength")) * Num(10.0))
+    s.res["alloy"] = s.res.get("alloy", ZERO) + salvage
+    s.run_life["alloy"] = s.run_life.get("alloy", ZERO) + salvage
+    s.total_life["alloy"] = s.total_life.get("alloy", ZERO) + salvage
+
+    tail = "Not a hull lost." if lost <= 0 else f"Lost {fmt(lost)} machines."
+    s.notice("incursion", f"Incursion turned back. Salvage {fmt(salvage)} Alloy. {tail}")
+
+    # Wrecks are where the good relics are.  Combat feeds the artifact system
+    # rather than competing with it for the player's attention.
+    target = TARGET_BY_ID.get("deep") or G.TARGETS[-1]
+    if rng.random() < min(1.0, 0.30 * collect_mults(s).drop):
+        art = _roll_artifact(s, target, rng)
+        s.notice("artifact", f"Recovered from the wreck: {art['name']}")
+
+
+def _advance_combat(s: GameState, dt: float, m: Mults, rng: random.Random) -> None:
+    if not s.has_flag("see_combat"):
+        return
+    inc = s.incursion
+    if inc is None:
+        # Threat does not accrue during a fight: you are never made to face a
+        # backlog you had no chance to spend against.
+        s.threat += threat_rate(s) * dt
+        if s.threat >= incursion_bar(s):
+            _spawn_incursion(s)
+        return
+
+    power = fleet_power(s)
+    hp = Num.from_json(inc.get("hp")) - power * Num(dt)
+    inc["hp"] = hp.to_json()
+    inc["elapsed"] = float(inc.get("elapsed", 0.0)) + dt
+
+    if not inc.get("tutorial"):
+        strength = Num.from_json(inc.get("strength"))
+        # Pressure is how much of the fight the incursion is winning.  A fleet
+        # far above the incursion takes essentially nothing, and there is no
+        # step anywhere on the curve -- 95% of what you need loses a little
+        # more than 105% does, never a run.
+        denom = strength + power
+        pressure = (strength / denom).to_float() if denom > 0 else 0.0
+        lost = _destroy_machines(s, G.ATTRITION_FRACTION * pressure * dt, m)
+        if lost > 0:
+            inc["lost"] = (Num.from_json(inc.get("lost")) + lost).to_json()
+            s.combat_lost_units = s.combat_lost_units + lost
+
+    # The tutorial incursion is won on the clock no matter what the player has,
+    # because "unlosable" has to mean unlosable.  A first fight that times out
+    # into a loss would teach exactly the wrong lesson at exactly the moment the
+    # player has no fleet and no reason to have built one yet.
+    if hp <= 0 or (inc.get("tutorial") and inc["elapsed"] >= G.INCURSION_TIME):
+        _win_incursion(s, inc, rng)
+    elif inc["elapsed"] >= G.INCURSION_TIME:
+        # It breaks off rather than grinding forever.  A fleet of zero must
+        # still reach the other side of a fight.
+        s.combat_losses += 1
+        s.incursion = None
+        s.notice("incursion",
+                 "The incursion broke off on its own terms. Lost "
+                 f"{fmt(Num.from_json(inc.get('lost')))} machines. "
+                 "Build more of the Defence ladder before the next one.")
 
 
 # ---------------------------------------------------------------------------
@@ -1592,18 +1871,33 @@ def _apply_start_bonuses(s: GameState) -> None:
     for rid, factor in m.start_res.items():
         if rid != "ore" and factor > 1.0:
             s.res[rid] = s.res.get(rid, ZERO) + Num(1000) * Num(factor)
+    for gid, count in start_gen_counts(m).items():
+        if gid in s.gens:
+            s.gens[gid] = s.gens[gid] + count
+            s.bought[gid] = s.bought[gid] + count
+    recompute(s)
+
+
+START_GEN_GROUPS = {"E": ("E1", "E2", "E3"),
+                    "EARLY_E": ("E1", "E2", "E3", "E4", "E5"),
+                    "EARLY_R": ("R1", "R2", "R3")}
+
+
+def start_gen_counts(m: Mults) -> dict[str, float]:
+    """Machines every run begins with, expanded from the group targets.
+
+    Shared with the Defection so that "combat never takes you below your floor"
+    is measured against the same table that grants the floor.  Two copies of
+    this expansion would drift, and the drift would only ever show up as the
+    player's Overwrite floors quietly being eaten.
+    """
+    out: dict[str, float] = {}
     for target, count in m.start_gen.items():
         if count <= 0:
             continue
-        groups = {"E": ("E1", "E2", "E3"),
-                  "EARLY_E": ("E1", "E2", "E3", "E4", "E5"),
-                  "EARLY_R": ("R1", "R2", "R3")}
-        targets = groups.get(target, (target,))
-        for gid in targets:
-            if gid in s.gens:
-                s.gens[gid] = s.gens[gid] + count
-                s.bought[gid] = s.bought[gid] + count
-    recompute(s)
+        for gid in START_GEN_GROUPS.get(target, (target,)):
+            out[gid] = out.get(gid, 0.0) + count
+    return out
 
 
 def hard_reset(s: GameState) -> GameState:

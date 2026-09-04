@@ -689,3 +689,110 @@ is a test saying so.
 | Next goals | Cached Genome (40), Standing Overwrite Orders (60) |
 
 Recursion (layer 5) remains scaffolded and empty.
+
+---
+
+# The Defection (combat)
+
+Everything in SEED is monotone: numbers only go up, and shortages slow but never
+destroy. Combat is the one exception, so its whole design is a fence around what
+it may take. Its single job is to pose the decision the economy cannot —
+**spending on something that produces nothing** — and if it did not do that, it
+would be a slot machine with extra steps and should not exist.
+
+The theme was already in the game. *Rogue Replicator* is an anomaly that hands
+you someone else's machine; the Defection is that inverted and made structural.
+
+## Three shape failures, in order
+
+Each was found by measurement, and each is the same underlying mistake: two
+quantities that must be compared were put on different growth curves.
+
+**1. Threat linear in progress vs a hyper-exponential fleet.** Threat was first
+`0.9 * log10(swarm)`, giving an incursion strength roughly linear in game
+progress. But fleet power carries the per-10 bonus like every other tier, so it
+is hyper-exponential in count. Any fleet at all trivialised combat permanently —
+a "0.25x" fleet in the first test rig measured at 350x, because 778 drones carry
+`1.1**77`.
+
+**2. The fleet eroding mid-fight.** With attrition applied to the D ladder, a
+fleet sized at exactly the stated requirement *lost*: an 11% loss of hulls more
+than halves fleet damage under the per-10 bonus, which loses the fight, which
+costs more hulls. That is the same death spiral the energy-throttle exemption
+exists to prevent, and it also made the requirement printed in the header a lie.
+*Fix:* the Defence ladder is exempt from attrition, alongside power generators.
+An incursion takes your economy, never your guns.
+
+**3. Sizing the incursion off the swarm made it unwinnable.** Deriving strength
+from swarm power put both sides on one curve, which fixed (1) — but the swarm is
+**replicated for free** and grows hyper-exponentially, while a fleet is
+**bought**, and cost is exponential in count, so affordable fleet power is only
+*logarithmic* in cash. Measured on the reporting save: **1e7.5Qa damage/s
+demanded against 1e2.2Qa affordable**, a gap of `1e5e15`. Not a tuning problem.
+
+*Fix:* magnitude is measured against the **bank**, not the swarm — the strength
+is whatever fleet 10% of your cash would buy at the best tier you have unlocked,
+computed from a standing start so buying ships never raises the bar. The demand
+is then always exactly as large as the decision it exists to pose, at every
+scale, and it cannot brick or be outgrown.
+
+Frequency and magnitude are separated for the same reason. Frequency is a
+**period** (600 s, stretching with your war record), because a rate drawn from
+swarm size came to 5.4e15 threat per second against a bar of 600 — an incursion
+every tick, forever.
+
+## A fourth loop, caught by a test
+
+D2-D5 originally unlocked on D1 counts, like the R ladder does. But strength is
+sized from the best tier *unlocked*, so buying D1 unlocked D2 and raised the very
+bar the D1 was bought to clear. The Defence tiers now gate on lifetime Alloy,
+like the Extraction ladder, and a test pins that buying ships cannot move the
+requirement.
+
+## The fight
+
+A race, not a coin flip: the incursion has HP, the fleet has DPS, and killing it
+sooner means losing less. Pressure is `strength / (strength + fleet)`, and losses
+are `0.004 * pressure` of each tier per second, reduced by `1/(1 + 0.5*(tier-1))`
+so the cheap tiers absorb the damage. A fight always ends — 120 s and the
+incursion breaks off, which is a loss but a bounded one, so a fleet of zero still
+reaches the other side.
+
+Measured curve, at a fixed incursion (no cliff anywhere on it):
+
+| fleet vs requirement | result |
+|---|---|
+| 0.10x | loss |
+| 0.47x | loss |
+| 0.90x | win |
+| 1.00x | win |
+| 10.0x | win, essentially free |
+
+Worst case, no fleet at all: a tier-3 machine keeps 78.7%, and `gens` and
+`bought` fall by exactly the same count — that split exists because free units
+caused an unbounded runaway once, so cutting only one side re-creates it. Taking
+both means a loss costs **time, not money**: costs fall with `bought`.
+
+## What it may never take
+
+Prestige currency of any layer, upgrades, research, relics, milestones,
+achievements, unlocks, power generators, the fleet itself, and anything below the
+floor your Overwrite and Substrate levels grant you. Each of those is a test, and
+the first one runs a deliberately unwinnable fight from a rich state and asserts
+the rest of the save comes out unchanged.
+
+The first incursion is scripted and unlosable. A player who meets combat for the
+first time by losing half a run has learned the wrong thing.
+
+## Calibration against the reporting save
+
+| | |
+|---|---|
+| Visible from | the first Overwrite (that save has 10) |
+| Incursion period | 10 minutes, stretching with wins |
+| Requirement | 2.88e6.07T damage/s |
+| Fleet after one Buy Max of D5 | 5.37e6.07T — still behind |
+| Fleet after two | 1.60e12.1T — comfortably ahead, nothing lost |
+
+Two clicks on an endgame save. That is deliberately the mild end for the first
+release of the only system that can take something away.

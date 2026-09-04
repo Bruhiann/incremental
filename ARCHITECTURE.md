@@ -106,12 +106,15 @@ resources. Time between sessions is recorded for statistics only: **no offline p
    guard, asserted in tests.
 4. Apply upkeep (Alloy, Isotopes). A deficit idles only the single highest-upkeep tier.
 5. Credit resources: `res[k] += rate_k * dt`, clamped at zero, capped where caps apply.
-6. Automation: auto-buy (respecting reserves), auto-refine, auto-research, auto-expedition,
-   auto-prestige.
-7. RNG rolls via accumulated-time counters, never per-tick probability — so event frequency
+6. The Defection: accrue threat, spawn an incursion when the period elapses, run one
+   round of the fight. Placed after production and before automation so a fleet bought
+   this tick defends this tick.
+7. Automation: auto-buy (respecting reserves), auto-refine, auto-research, auto-expedition,
+   auto-defence, auto-prestige.
+8. RNG rolls via accumulated-time counters, never per-tick probability — so event frequency
    is independent of tick rate.
-8. Evaluate unlocks, milestones, achievements; queue popups.
-9. Update stats and peaks.
+9. Evaluate unlocks, milestones, achievements; queue popups.
+10. Update stats and peaks.
 
 ## 6. Production calculation
 

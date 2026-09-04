@@ -105,6 +105,34 @@ a multiplier of 1e400 that is worth more than a hundred x10s. The crossover is
 real and the game tells you where it is. It also unlocks a Cached Genome that
 carries the Seed Grid through Convergence, and auto-Overwrite.
 
+## The Defection
+
+You built self-replicating machines. From your first Overwrite, some of them
+stop answering.
+
+Every other system in SEED only adds. The Defection is the one that can take
+something back, and it exists to pose the one decision an economy cannot: the
+**Defence ladder produces nothing at all**. Sentry Drones, Picket Cruisers,
+Lance Frigates, Bastions and Nemesis Hulls draw power, eat upkeep, and make no
+Ore, no Alloy and no machines. Choosing how much of your wealth to park in them
+is the mechanic.
+
+An incursion is a race rather than a dice roll: it has HP, your fleet has damage
+per second, and killing it sooner costs you less. There is no cliff anywhere on
+that curve — a fleet at 90% of what it needs still wins, slightly more expensively.
+What it demands is always **a share of your bank**, so it scales with you forever
+and can never become impossible.
+
+What it can take is machines, and nothing else. Not prestige currency, not
+upgrades, not research, not relics, not your power plants, not your fleet, and
+never below the floor your Overwrite and Substrate levels grant you. Losses come
+out of purchased counts too, so a loss costs you time rather than money. Every
+one of those limits is a test.
+
+Winning pays salvage, relics pulled out of the wreck, and a permanent global
+multiplier that grows with your war record. The very first incursion is scripted
+and cannot be lost.
+
 Every shop — machines, the Seed Grid, the Coherence Nodes, the Floors and the
 Lattice — has the same
 **Buy 1 / 10 / 25 / Max** control, and all of them price bulk purchases with a
@@ -113,7 +141,9 @@ closed-form geometric series rather than a loop.
 **Automation** arrives as a reward, never as a given: Fabricator Arms (minute 5)
 → per-machine auto-buy with spending reserves (Foreman research) → auto-Research,
 auto-Upgrades, auto-Relics and auto-Expedition (Seed Grid nodes) → auto-Dispersal
-and auto-Seed-Grid (Coherence nodes). The last two together make the whole
+and auto-Seed-Grid (Coherence nodes) → Standing Defence Orders, which keeps the
+fleet a margin ahead of the next incursion so you stop watching the bar. The Seed
+Grid and Dispersal pair together make the whole
 Dispersal layer hands-off: it resets itself and spends the Seed Points itself. Auto-spending never touches your reserve, whatever it is
 buying, and every automatic purchase goes through the same code path you do.
 

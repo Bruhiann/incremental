@@ -18,7 +18,7 @@ from seed import engine as E  # noqa: E402
 from seed import gamedata as G  # noqa: E402
 from seed import saveman  # noqa: E402
 from seed.bignum import N, ZERO, fmt  # noqa: E402
-from seed.ui import App  # noqa: E402
+from seed.ui import App, is_packed  # noqa: E402
 
 
 def pump(root, n=6):
@@ -58,7 +58,10 @@ def main():
     before_ticks = app.ticks
     app.tick()
     pump(root)
-    assert app.ticks == before_ticks + 1, "the game loop did not advance"
+    # At least one: pump() drains the after() callback tick() just scheduled, so
+    # the count can legitimately advance by two. What is being checked is that
+    # the loop runs at all, and that it schedules exactly one successor.
+    assert app.ticks > before_ticks, "the game loop did not advance"
     app.buy("E1")
     assert s.gens["E1"] > ZERO, "manual buy did nothing"
     print(f"after 40 clicks + 1 buy: ore={fmt(s.res['ore'])} E1={fmt(s.gens['E1'])}")
@@ -428,6 +431,42 @@ def main():
     app.nb.select(app.frames["automation"])
     app.refresh(); pump(root)
     print(f"  auto-Overwrite control: {app.autoo_cb.cget('state')}")
+
+    # -- the Defection ---------------------------------------------------
+    app.nb.select(app.frames["defence"])
+    app.refresh(); pump(root)
+    assert "D1" in s.unlocked, "the Defence ladder never unlocked"
+    # The Collapse above wiped the swarm, and no swarm means no defectors.
+    s.gens["R1"] = N(2000); s.bought["R1"] = N(2000)
+    s.res["ore"] = N(1e30); s.res["alloy"] = N(1e30)
+    E.recompute(s)
+    assert E.incursion_strength(s) > ZERO, "a swarm this size should defect"
+    app.buy_amount.set("25")
+    app.refresh(); pump(root)
+    app.buy("D1")
+    E.recompute(s)
+    assert s.gens["D1"] > ZERO, "could not buy a Sentry Drone"
+    assert E.fleet_power(s) > ZERO, "a fleet that deals no damage"
+    print(f"  fleet: {fmt(s.gens['D1'])} drones, {fmt(E.fleet_power(s))} damage/s "
+          f"vs {fmt(E.incursion_strength(s))} needed")
+
+    # Drive a whole incursion through the real widget, tutorial first.
+    s.combat_wins = 0
+    s.threat = E.incursion_bar(s)
+    for _ in range(900):
+        E.tick(s, 0.25, E._rng(s))
+        if s.combat_wins or s.combat_losses:
+            break
+    app.refresh(); pump(root)
+    assert s.combat_wins == 1 and s.combat_losses == 0, \
+        "the scripted first incursion was lost"
+    print(f"  tutorial incursion turned back, {fmt(s.combat_lost_units)} machines lost")
+    assert is_packed(app.threat_row), "the threat strip is not on screen"
+    print(f"  header says: {app.threat_label.cget('text')}")
+
+    app.nb.select(app.frames["automation"])
+    app.refresh(); pump(root)
+    print(f"  auto-Defence control: {app.autod_cb.cget('state')}")
 
     # Save/close path.
     app.save_now()

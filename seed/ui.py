@@ -7,6 +7,7 @@ incremental ends up freezing, so it is never done here.
 
 from __future__ import annotations
 
+import math
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -206,6 +207,16 @@ class App:
             "If demand exceeds supply everything except power generation\n"
             "slows to supply/demand, floored at 10%. Build more power."))
 
+        # Combat is the only system in the game that can take something back, so
+        # it says so where the throttle bar says so, and it names its own fix.
+        self.threat_row = tk.Frame(head, bg=BG2)
+        self.threat_label = tk.Label(self.threat_row, text="", bg=BG2, fg=CRIMSON,
+                                     font=FB, anchor="w")
+        self.threat_label.pack(side="left")
+        self.threat_hint = tk.Label(self.threat_row, text="", bg=BG2, fg=YELLOW,
+                                    font=F, anchor="w")
+        self.threat_hint.pack(side="left", padx=(10, 0))
+
         goal = tk.Frame(head, bg=BG2)
         goal.pack(fill="x", padx=12, pady=(2, 8))
         self.goal_label = tk.Label(goal, text="", bg=BG2, fg=ACCENT, font=F, anchor="w")
@@ -221,6 +232,7 @@ class App:
             "upgrades": self._build_upgrades,
             "research": self._build_research,
             "exploration": self._build_exploration,
+            "defence": self._build_defence,
             "prestige": self._build_prestige,
             "convergence": self._build_convergence,
             "overwrite": self._build_overwrite,
@@ -310,12 +322,21 @@ class App:
                 "cost": cost, "btn": btn}
 
     def _rows_after(self, key):
-        """Generator rows and headers that should sit below `key`."""
+        """Generator rows and headers that should sit below `key`.
+
+        Scoped to `key`'s own parent: the Defence ladder lives in a different
+        tab from Extraction and Replication, and Tk raises rather than reorders
+        if you name a sibling from another frame as the anchor.
+        """
         keys = list(self.gen_rows)
+        anchor = self.gen_rows[key]
+        parent = (anchor["row"] if isinstance(anchor, dict) else anchor).master
         out = []
         for later in keys[keys.index(key) + 1:]:
             w = self.gen_rows[later]
-            out.append(w["row"] if isinstance(w, dict) else w)
+            widget = w["row"] if isinstance(w, dict) else w
+            if widget.master is parent:
+                out.append(widget)
         return out
 
     def _gen_tip(self, g: G.Gen) -> str:
@@ -447,6 +468,93 @@ class App:
             self.refresh()
 
     # -- exploration -----------------------------------------------------
+    # -- defence ---------------------------------------------------------
+    def _build_defence(self, parent):
+        bar = tk.Frame(parent, bg=BG)
+        bar.pack(fill="x", padx=10, pady=(8, 4))
+        tk.Label(bar, text="Buy", bg=BG, fg=DIM, font=F).pack(side="left", padx=(0, 6))
+        for amount in ("1", "10", "25", "Max"):
+            tk.Radiobutton(bar, text=amount, value=amount, variable=self.buy_amount,
+                           bg=BG, fg=FG, selectcolor=BG3, font=F, indicatoron=False,
+                           width=4, relief="flat", activebackground=ACCENT,
+                           cursor="hand2", command=self._remember_amount).pack(
+                               side="left", padx=2)
+
+        inner = scrollable(parent)
+        status = tk.Frame(inner, bg=BG2)
+        status.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(status, text="The Defection", bg=BG2, fg=CRIMSON, font=FH,
+                 anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        self.def_body = tk.Label(status, text="", bg=BG2, fg=FG, font=F, anchor="w",
+                                 justify="left", wraplength=900)
+        self.def_body.pack(fill="x", padx=12, pady=(0, 6))
+        self.def_canvas = tk.Canvas(status, height=10, bg=BG3, highlightthickness=0)
+        self.def_canvas.pack(fill="x", padx=12, pady=(0, 10))
+        self.def_bar = self.def_canvas.create_rectangle(0, 0, 0, 10, fill=CRIMSON,
+                                                        width=0)
+
+        tk.Label(inner,
+                 text="Defence — machines that make nothing, and hold what the "
+                      "rest of them made",
+                 bg=BG, fg=ACCENT, font=FB, anchor="w", wraplength=900,
+                 justify="left").pack(fill="x", padx=10, pady=(10, 2))
+        for g in G.DEFEND_GENS:
+            self.gen_rows[g.id] = self._gen_row(inner, g)
+
+    def _refresh_defence(self):
+        s = self.state
+        m = E.collect_mults(s)
+        for g in G.DEFEND_GENS:
+            self._update_gen_row(g, m)
+
+        power = E.fleet_power(s)
+        need = E.incursion_strength(s)
+        inc = s.incursion
+        lines = [f"Fleet damage:  {fmt(power)}/s"]
+        if inc is None:
+            bar = E.incursion_bar(s)
+            rate = E.threat_rate(s)
+            eta = ((bar - s.threat) / rate) if rate > 0 else 0.0
+            lines.append(f"Next incursion needs:  {fmt(need)} damage/s to turn "
+                         f"back cleanly")
+            if rate > 0:
+                lines.append(f"Arriving in {fmt_time(max(0.0, eta))}   "
+                             f"(threat {s.threat:,.0f} / {bar:,.0f})")
+            else:
+                lines.append("No swarm, no defectors. Threat comes from the size "
+                             "of your own Replication ladder.")
+            frac = min(1.0, s.threat / bar) if bar > 0 else 0.0
+        else:
+            hp = Num.from_json(inc.get("hp")).clamp_min(0)
+            hp0 = Num.from_json(inc.get("hp0"))
+            left = G.INCURSION_TIME - float(inc.get("elapsed", 0.0))
+            lines.append(f"INCURSION IN PROGRESS — {fmt(hp)} left of {fmt(hp0)}")
+            if inc.get("tutorial"):
+                lines.append("This first one cannot hurt you. Watch what it does.")
+            else:
+                lines.append(f"Machines lost so far: {fmt(Num.from_json(inc.get('lost')))}"
+                             f"   ·   breaks off in {fmt_time(max(0.0, left))}")
+            frac = (hp / hp0).to_float() if hp0 > 0 else 0.0
+
+        lines.append("")
+        lines.append(f"Turned back: {s.combat_wins}    Broke through: "
+                     f"{s.combat_losses}    Machines lost all told: "
+                     f"{fmt(s.combat_lost_units)}")
+        if s.combat_wins > 0:
+            bonus = 1.0 + G.COMBAT_WIN_K * math.log10(1.0 + s.combat_wins)
+            lines.append(f"Your war record pays ×{bonus:.2f} to everything you "
+                         f"produce, permanently.")
+        lines.append("An incursion never takes prestige currency, upgrades, "
+                     "research, relics, your power plants or your fleet — only "
+                     "machines, and never below the floor your layers grant you.")
+        self.def_body.config(text="\n".join(lines))
+
+        width = max(1, self.def_canvas.winfo_width())
+        self.def_canvas.coords(self.def_bar, 0, 0, width * max(0.0, min(1.0, frac)), 10)
+        self.def_canvas.itemconfig(
+            self.def_bar, fill=CRIMSON if inc is not None else
+            (YELLOW if power < need else GREEN))
+
     def _build_exploration(self, parent):
         inner = scrollable(parent)
         tk.Label(inner, text="Probes run in parallel and never block anything else.",
@@ -1016,6 +1124,28 @@ class App:
         tk.Label(prow, text="x the Seed Points you already hold", bg=BG, fg=DIM,
                  font=F).pack(side="left")
 
+        tk.Label(inner, text="Auto-Defence", bg=BG, fg=ACCENT, font=FB,
+                 anchor="w").pack(fill="x", padx=10, pady=(14, 2))
+        self.autod_var = tk.BooleanVar(
+            value=bool(self.state.auto.get("defence_enabled")))
+        self.autod_cb = tk.Checkbutton(
+            inner, text="Keep the fleet ahead of the threat", variable=self.autod_var,
+            command=self._autod_changed, bg=BG, fg=FG, font=F, selectcolor=BG3,
+            activebackground=BG, anchor="w")
+        self.autod_cb.pack(fill="x", padx=24)
+        drow = tk.Frame(inner, bg=BG)
+        drow.pack(fill="x", padx=24, pady=2)
+        tk.Label(drow, text="hold fleet damage at", bg=BG, fg=DIM,
+                 font=F).pack(side="left")
+        self.autod_entry = tk.Entry(drow, bg=BG3, fg=FG, font=FMONO, width=5,
+                                    insertbackground=FG, relief="flat")
+        self.autod_entry.insert(0, str(self.state.auto.get("defence_margin", 2.0)))
+        self.autod_entry.pack(side="left", padx=6)
+        self.autod_entry.bind("<FocusOut>", lambda _e: self._autod_margin())
+        self.autod_entry.bind("<Return>", lambda _e: self._autod_margin())
+        tk.Label(drow, text="x what the next incursion needs", bg=BG, fg=DIM,
+                 font=F).pack(side="left")
+
         tk.Label(inner, text="Auto-Overwrite", bg=BG, fg=ACCENT, font=FB,
                  anchor="w").pack(fill="x", padx=10, pady=(14, 2))
         self.autoo_var = tk.BooleanVar(
@@ -1076,6 +1206,18 @@ class App:
                                 command=lambda k=key, v=var: self._standing_changed(k, v))
             cb.pack(fill="x", padx=24)
             self.standing[key] = (var, cb, flag)
+
+    def _autod_changed(self):
+        self.state.auto["defence_enabled"] = bool(self.autod_var.get())
+
+    def _autod_margin(self):
+        try:
+            value = max(1.0, float(self.autod_entry.get().strip() or "2"))
+        except ValueError:
+            value = 2.0
+        self.state.auto["defence_margin"] = value
+        self.autod_entry.delete(0, "end")
+        self.autod_entry.insert(0, f"{value:g}")
 
     def _autoo_changed(self):
         self.state.auto["overwrite_enabled"] = bool(self.autoo_var.get())
@@ -1238,6 +1380,8 @@ class App:
             self._refresh_research()
         elif current == "Exploration":
             self._refresh_exploration()
+        elif current == "Defence":
+            self._refresh_defence()
         elif current == "Dispersal":
             self._refresh_prestige()
         elif current == "Convergence":
@@ -1297,10 +1441,63 @@ class App:
         self.power_canvas.coords(self.power_bar, 0, 0, width * frac, 8)
         self.power_canvas.itemconfig(self.power_bar, fill=colour)
 
+        self._refresh_threat_strip()
         self.goal_label.config(text="Next: " + self._next_goal())
         saving = "  •  saving…" if self.save_flash > 0 else ""
         self.clock_label.config(
             text=f"run {fmt_time(s.run_time())}   total {fmt_time(s.stats.get('playtime', 0))}{saving}")
+
+    def _refresh_threat_strip(self):
+        """The one line that has to be on screen whenever something can be lost.
+
+        Named fixes, not just a number: the throttle bar has said "Build Solar
+        Film or Fusion Cell" since the first hour, and a player who cannot see
+        what to buy will read a loss as a bug rather than as a decision.
+        """
+        s = self.state
+        if not s.has_flag("see_combat"):
+            if is_packed(self.threat_row):
+                self.threat_row.pack_forget()
+            return
+        if not is_packed(self.threat_row):
+            self.threat_row.pack(fill="x", padx=12, pady=(0, 4), before=self.goal_label.master)
+
+        power, need = E.fleet_power(s), E.incursion_strength(s)
+        inc = s.incursion
+        if inc is not None:
+            hp = Num.from_json(inc.get("hp")).clamp_min(0)
+            left = G.INCURSION_TIME - float(inc.get("elapsed", 0.0))
+            self.threat_label.config(
+                text=f"INCURSION — {fmt(hp)} left, {fmt_time(max(0.0, left))} "
+                     f"before it breaks off", fg=CRIMSON)
+            if inc.get("tutorial"):
+                self.threat_hint.config(text="This one cannot hurt you.", fg=GREEN)
+            else:
+                self.threat_hint.config(
+                    text="" if power >= need else
+                    f"Losing machines — build {self._best_defence_hint()}", fg=YELLOW)
+            return
+
+        bar = E.incursion_bar(s)
+        rate = E.threat_rate(s)
+        eta = fmt_time((bar - s.threat) / rate) if rate > 0 else "—"
+        self.threat_label.config(
+            text=f"Threat {s.threat:,.0f} / {bar:,.0f} — incursion in {eta}",
+            fg=CRIMSON if power < need else DIM)
+        if power >= need:
+            self.threat_hint.config(text="Fleet is ahead of it.", fg=GREEN)
+        else:
+            self.threat_hint.config(
+                text=f"Fleet {fmt(power)}/s vs {fmt(need)}/s needed — build "
+                     f"{self._best_defence_hint()}", fg=YELLOW)
+
+    def _best_defence_hint(self) -> str:
+        """The dearest Defence tier the player has actually unlocked."""
+        s = self.state
+        for g in reversed(G.DEFEND_GENS):
+            if g.id in s.unlocked:
+                return g.name + "s"
+        return "the Defence ladder"
 
     def _next_goal(self) -> str:
         s = self.state
@@ -1354,56 +1551,68 @@ class App:
             if len(self.visible_tabs) > 1:
                 self.log(f"New tab unlocked: {tab.name}", "good")
 
-    def _refresh_production(self):
+    def _update_gen_row(self, g: G.Gen, m):
+        """One generator row. Shared by Production and Defence.
+
+        The Defence ladder is displayed by the same widget as everything else
+        on purpose: a ship is bought, counted and multiplied exactly like a
+        mine, and the only thing that differs is what its output is called.
+        """
         s = self.state
-        m = E.collect_mults(s)
+        w = self.gen_rows[g.id]
+        if g.id not in s.unlocked:
+            if is_packed(w["row"]):
+                w["row"].pack_forget()
+            return
+        if not is_packed(w["row"]):
+            pack_ordered(w["row"], self._rows_after(g.id),
+                         fill="x", padx=10, pady=2)
+
+        count = s.gens.get(g.id, ZERO)
+        bought = s.bought.get(g.id, ZERO)
+        mult = s.mults.get(g.id, Num(1))
+        output = count * N(g.base_rate) * mult
+        if g.ladder == G.DEFEND:
+            unit = "damage"
+        elif g.produces in G.RES_BY_ID:
+            unit = G.RES_BY_ID[g.produces].name
+        elif g.produces:
+            unit = G.GEN_BY_ID[g.produces].name
+        else:
+            unit = ""
+        shown = fmt(count) if count >= 100 else f"{count.to_float():.2f}".rstrip("0").rstrip(".")
+        w["title"].config(text=f"{g.name}   ×{shown}")
+        detail = f"{fmt(output)} {unit}/s"
+        if g.produces != "energy" and g.ladder != G.DEFEND and s.throttle < 0.999:
+            detail += f"  (throttled to {s.throttle * 100:.0f}%)"
+        eff = s.upkeep_eff.get(g.id)
+        if eff is not None and eff < 0.999:
+            detail += f"  ·  IDLED {(1 - eff) * 100:.0f}% (needs Alloy)"
+        w["detail"].config(text=detail)
+
+        steps = int(bought.to_float() % 10) if bought.e < 15 else 0
+        w["pips"].config(text="●" * steps + "○" * (10 - steps) +
+                              f"  {steps}/10 to the next ×1.10")
+
+        amount = self.buy_amount.get()
+        k = E.max_affordable(s, g.id, m) if amount == "Max" else int(amount)
+        k = max(1, min(k, E.MAX_BUY)) if amount == "Max" else k
+        cost = E.cost_of(s, g.id, k, m)
+        affordable = s.res.get(g.cost_res, ZERO) >= cost and \
+            (amount != "Max" or E.max_affordable(s, g.id, m) > 0)
+        label = f"x{k}" if amount == "Max" else f"x{amount}"
+        w["cost"].config(text=f"{fmt(cost)} {G.RES_BY_ID[g.cost_res].name}",
+                         fg=FG if affordable else DIM)
+        w["btn"].config(text=f"Buy {label}",
+                        bg=ACCENT if affordable else BG3,
+                        fg="#12151c" if affordable else DIM,
+                        state="normal" if affordable else "disabled")
+
+    def _refresh_production(self):
+        m = E.collect_mults(self.state)
         for g in G.GENERATORS:
-            w = self.gen_rows[g.id]
-            if g.id not in s.unlocked:
-                if is_packed(w["row"]):
-                    w["row"].pack_forget()
-                continue
-            if not is_packed(w["row"]):
-                pack_ordered(w["row"], self._rows_after(g.id),
-                             fill="x", padx=10, pady=2)
-
-            count = s.gens.get(g.id, ZERO)
-            bought = s.bought.get(g.id, ZERO)
-            mult = s.mults.get(g.id, Num(1))
-            output = count * N(g.base_rate) * mult
-            if g.produces in G.RES_BY_ID:
-                unit = G.RES_BY_ID[g.produces].name
-            elif g.produces:
-                unit = G.GEN_BY_ID[g.produces].name
-            else:
-                unit = ""
-            shown = fmt(count) if count >= 100 else f"{count.to_float():.2f}".rstrip("0").rstrip(".")
-            w["title"].config(text=f"{g.name}   ×{shown}")
-            detail = f"{fmt(output)} {unit}/s"
-            if g.produces != "energy" and s.throttle < 0.999:
-                detail += f"  (throttled to {s.throttle * 100:.0f}%)"
-            eff = s.upkeep_eff.get(g.id)
-            if eff is not None and eff < 0.999:
-                detail += f"  ·  IDLED {(1 - eff) * 100:.0f}% (needs Alloy)"
-            w["detail"].config(text=detail)
-
-            steps = int(bought.to_float() % 10) if bought.e < 15 else 0
-            w["pips"].config(text="●" * steps + "○" * (10 - steps) +
-                                  f"  {steps}/10 to the next ×1.10")
-
-            amount = self.buy_amount.get()
-            k = E.max_affordable(s, g.id, m) if amount == "Max" else int(amount)
-            k = max(1, min(k, E.MAX_BUY)) if amount == "Max" else k
-            cost = E.cost_of(s, g.id, k, m)
-            affordable = s.res.get(g.cost_res, ZERO) >= cost and \
-                (amount != "Max" or E.max_affordable(s, g.id, m) > 0)
-            label = f"x{k}" if amount == "Max" else f"x{amount}"
-            w["cost"].config(text=f"{fmt(cost)} {G.RES_BY_ID[g.cost_res].name}",
-                             fg=FG if affordable else DIM)
-            w["btn"].config(text=f"Buy {label}",
-                            bg=ACCENT if affordable else BG3,
-                            fg="#12151c" if affordable else DIM,
-                            state="normal" if affordable else "disabled")
+            if g.ladder != G.DEFEND:
+                self._update_gen_row(g, m)
 
     def _refresh_upgrades(self):
         s = self.state
@@ -1656,6 +1865,9 @@ class App:
             want = bool(s.auto.get(key))
             if bool(var.get()) != want:
                 var.set(want)
+        want_d = bool(s.auto.get("defence_enabled"))
+        if bool(self.autod_var.get()) != want_d:
+            self.autod_var.set(want_d)
         want_o = bool(s.auto.get("overwrite_enabled"))
         if bool(self.autoo_var.get()) != want_o:
             self.autoo_var.set(want_o)
@@ -1691,6 +1903,9 @@ class App:
         ac = "normal" if s.has_flag("auto_converge") else "disabled"
         self.autoc_cb.config(state=ac, fg=FG if ac == "normal" else DIM)
         self.autoc_entry.config(state=ac)
+        ad = "normal" if s.has_flag("auto_defence") else "disabled"
+        self.autod_cb.config(state=ad, fg=FG if ad == "normal" else DIM)
+        self.autod_entry.config(state=ad)
         ao = "normal" if s.has_flag("auto_overwrite") else "disabled"
         self.autoo_cb.config(state=ao, fg=FG if ao == "normal" else DIM)
         self.autoo_entry.config(state=ao)
@@ -1716,6 +1931,9 @@ class App:
             f"Dispersals          {s.p1_count}",
             f"Convergences        {s.p2_count}",
             f"Overwrites          {s.p3_count}",
+            f"Incursions won      {s.combat_wins}",
+            f"Incursions lost     {s.combat_losses}",
+            f"Machines lost       {fmt(s.combat_lost_units)}",
             f"Collapses           {s.p4_count}",
             f"Substrate           {fmt(s.p4_sub)}",
             f"Overwrite Charges   {fmt(s.p3_oc)}",
