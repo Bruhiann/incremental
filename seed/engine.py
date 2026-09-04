@@ -2100,11 +2100,18 @@ def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
     if G.COHERE not in wipes:
         for rid in G.COHERE_RESOURCES:
             carried[rid] = s.res.get(rid, ZERO)
-    # These carry a layer's work through the reset BELOW them, never through
-    # the reset that is supposed to clear that layer.
-    gentle = G.COHERE not in wipes
-    keep_research = s.research if (gentle and s.has_flag("keep_research")) else None
-    keep_seed = s.p1_levels if (gentle and s.has_flag("keep_seed")) else None
+    # Keepers -- Persistent Archive, Cached Genome -- protect for exactly as
+    # long as the node that promised them survives, and not a layer less.
+    #
+    # This used to be a hardcoded `COHERE not in wipes`, which switched both of
+    # them off from Overwrite onward even though Persistent Archive lives in
+    # `p3_levels` (only a Collapse takes it) and Cached Genome lives in
+    # `p4_levels` (only a Recursion takes it). Both went dormant while still
+    # owned and still paid for. Asking the POST-reset state instead means the
+    # rule is "you keep it if the thing that promised it survived", it needs no
+    # per-layer bookkeeping, and any keeper added later inherits it.
+    saved_research = s.research
+    saved_seed = s.p1_levels
     fresh = GameState()
     for field, scope in RESET_SCOPE.items():
         if scope in wipes:
@@ -2112,10 +2119,11 @@ def _reset_scopes(s: GameState, wipes: tuple[str, ...]) -> None:
             setattr(s, field, value.copy() if hasattr(value, "copy") else value)
     for rid, held in carried.items():
         s.res[rid] = held
-    if keep_research is not None:
-        s.research = keep_research
-    if keep_seed is not None:
-        s.p1_levels = keep_seed
+    surviving = collect_mults(s).flags
+    if surviving.get("keep_research"):
+        s.research = saved_research
+    if surviving.get("keep_seed"):
+        s.p1_levels = saved_seed
     s.run_start = time.time()
     s.events = []
     s.probes = []

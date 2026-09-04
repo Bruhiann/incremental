@@ -973,3 +973,51 @@ must rise with the bank, the auto-buy allowance must track affordability rather
 than its floor, a purchase past 1e15 must go through, and the machines-bought
 stat must survive a save round-trip. All four fail if the cap is put back to
 1e15, which is how they were checked.
+
+---
+
+# Keepers went dormant while still owned
+
+Reported as "why do I have to re-buy dispersal upgrades every time I overwrite,
+is that how it's supposed to be?"
+
+Half of it is supposed to be. Overwrite wipes everything Convergence wipes, and
+Convergence wipes the Seed Grid along with Seed Points. That is the layer doing
+its job, and Floors are what it gives back.
+
+The other half was a bug. Two nodes exist to stop exactly this — **Persistent
+Archive** (Research) and **Cached Genome** (the Seed Grid) — and both stopped
+protecting one layer before they were themselves destroyed:
+
+| reset | Seed Grid | Cached Genome node |
+|---|---|---|
+| Convergence | kept | owned |
+| Overwrite | **wiped** | **owned** |
+| Collapse | **wiped** | **owned** |
+| Recursion | wiped | gone |
+
+The guard was a hardcoded `COHERE not in wipes`, which switches both off from
+Overwrite onward. But Persistent Archive lives in `p3_levels`, which only a
+Collapse clears, and Cached Genome lives in `p4_levels`, which only a Recursion
+clears. Both were bought, both survived, and neither did anything.
+
+The code's own comment claimed the rule was "carry a layer's work through the
+reset below it, never through the reset that clears that layer" — and it did not
+implement that. For Cached Genome the reset that clears its layer is Recursion,
+not Overwrite.
+
+*Fix:* the keeper flags are read from the **post-reset** state. The rule becomes
+"you keep it if the thing that promised it survived", which needs no per-layer
+bookkeeping, cannot drift from the reset table, and any keeper added later
+inherits it for free. Both node descriptions were rewritten, because they were
+promising less than the nodes now deliver.
+
+## A test that was wrong
+
+`test_a_collapse_still_wipes_the_seed_grid_even_with_genome` failed, and it was
+the test that was wrong, not the change. It had pinned the old behaviour with a
+principled-sounding reason — do not carry work through the reset meant to clear
+it — that did not survive checking against where the node is actually stored. It
+now asserts both halves of the corrected rule, plus the Overwrite case the
+player asked about, plus the without-the-node control. Persistent Archive gained
+a matching set.

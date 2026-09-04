@@ -277,15 +277,46 @@ class TestSubstrateShop(unittest.TestCase):
         E.converge(s)
         self.assertEqual(s.p1_levels, {})
 
-    def test_a_collapse_still_wipes_the_seed_grid_even_with_genome(self):
-        """Carrying work through the layer BELOW is fine; through the layer
-        that is meant to clear it is not."""
+    def test_genome_protects_for_exactly_as_long_as_it_survives(self):
+        """This test previously asserted the opposite, and was wrong.
+
+        It pinned "a Collapse wipes the Seed Grid even with Cached Genome",
+        which sounded principled -- do not carry work through the reset meant
+        to clear it -- but Cached Genome lives in `p4_levels`, and a Collapse
+        does not clear those. Only a Recursion does. The node therefore went
+        dormant while still owned and still paid for, which is what a player
+        actually noticed. The rule is now "you keep it while the thing that
+        promised it survives", and this asserts both halves of it.
+        """
         s = self._stocked(1e12)
         E.buy_substrate(s, "sb_genome", 1)
         s.p1_levels["sg_global"] = 12
         E.recompute(s)
-        s.p3_oc_life = E.p4_required(s) * Num(1e6)
-        E.collapse(s)
+
+        # A Collapse leaves the node alone, so it keeps working.
+        E._reset_scopes(s, G.LAYER_BY_ID["p4"].wipes)
+        self.assertEqual(s.p4_levels.get("sb_genome"), 1)
+        self.assertEqual(s.p1_levels, {"sg_global": 12})
+
+        # A Recursion takes the node, and the protection goes with it.
+        E._reset_scopes(s, G.LAYER_BY_ID["p5"].wipes)
+        self.assertEqual(s.p4_levels, {})
+        self.assertEqual(s.p1_levels, {})
+
+    def test_genome_holds_the_seed_grid_through_an_overwrite(self):
+        """The reset the player asked about."""
+        s = self._stocked(1e12)
+        E.buy_substrate(s, "sb_genome", 1)
+        s.p1_levels["sg_global"] = 12
+        E.recompute(s)
+        E._reset_scopes(s, G.LAYER_BY_ID["p3"].wipes)
+        self.assertEqual(s.p1_levels, {"sg_global": 12})
+
+    def test_without_genome_an_overwrite_takes_the_seed_grid(self):
+        s = self._stocked(1e12)
+        s.p1_levels["sg_global"] = 12
+        E.recompute(s)
+        E._reset_scopes(s, G.LAYER_BY_ID["p3"].wipes)
         self.assertEqual(s.p1_levels, {})
 
     def test_charge_multiplier_applies(self):

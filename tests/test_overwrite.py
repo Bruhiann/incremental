@@ -475,3 +475,41 @@ class TestAutoBuyKeepsUp(unittest.TestCase):
         s = self._rich_autobuyer(ore=1e6)
         run(s, 2.0)
         self.assertGreaterEqual(s.res["ore"], ZERO)
+
+
+class TestArchiveLifetime(unittest.TestCase):
+    """Persistent Archive protects Research for as long as the node lasts.
+
+    It lives in `p3_levels`, which only a Collapse clears -- so it must hold
+    Research through a Dispersal, a Convergence AND an Overwrite, then stop.
+    It previously stopped one layer early, going dormant while still owned.
+    """
+
+    def _stocked(self):
+        s = new_game()
+        s.p1_count, s.p2_count, s.p3_count = 200, 30, 6
+        s.p3_levels = {"ow_archive": 1}
+        s.research = {"r_landfall", "r_starlift"}
+        s.p1_levels = {"sg_global": 9}
+        E.recompute(s)
+        return s
+
+    def test_research_survives_up_to_and_including_an_overwrite(self):
+        for layer_id in ("p1", "p2", "p3"):
+            s = self._stocked()
+            E._reset_scopes(s, G.LAYER_BY_ID[layer_id].wipes)
+            self.assertEqual(s.research, {"r_landfall", "r_starlift"},
+                             f"{layer_id} took Research despite the Archive")
+
+    def test_a_collapse_takes_the_node_and_the_protection_together(self):
+        s = self._stocked()
+        E._reset_scopes(s, G.LAYER_BY_ID["p4"].wipes)
+        self.assertEqual(s.p3_levels, {}, "the Archive node survived a Collapse")
+        self.assertEqual(s.research, set())
+
+    def test_without_the_archive_a_convergence_takes_research(self):
+        s = self._stocked()
+        s.p3_levels = {}
+        E.recompute(s)
+        E._reset_scopes(s, G.LAYER_BY_ID["p2"].wipes)
+        self.assertEqual(s.research, set())

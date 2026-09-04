@@ -856,7 +856,8 @@ OVERWRITE_GRID: tuple[OverUpg, ...] = (
     OverUpg("ow_relic", "Rewritten Frame", "+2 Relic slots per level.",
             20, 1.80, 10, Eff(ADD_SLOT, "relic", 2)),
     OverUpg("ow_archive", "Persistent Archive",
-            "Research survives Convergence. You never re-learn anything again.",
+            "Research survives every reset up to and including an Overwrite. "
+            "You never re-learn anything until a Collapse takes this node.",
             40, 1.0, 1, Eff(SET_FLAG, "keep_research")),
     OverUpg("ow_autocoh", "Standing Coherence Orders",
             "The Coherence Nodes buy themselves, cheapest level first. The "
@@ -923,7 +924,8 @@ SUBSTRATE_GRID: tuple[SubUpg, ...] = (
     SubUpg("sb_relic", "Woven Frame", "+5 Relic slots per level.",
            25, 1.60, 10, Eff(ADD_SLOT, "relic", 5)),
     SubUpg("sb_genome", "Cached Genome",
-           "The Seed Grid survives Convergence. You keep what you bought.",
+           "The Seed Grid survives every reset up to and including a Collapse. "
+           "You keep what you bought until a Recursion takes this node.",
            40, 1.0, 1, Eff(SET_FLAG, "keep_seed")),
     SubUpg("sb_autoover", "Standing Overwrite Orders",
            "Overwrite runs itself at a depth you choose.", 60, 1.0, 1,
