@@ -1813,7 +1813,8 @@ class App:
         cost = E.cost_of(s, g.id, k, m)
         affordable = s.res.get(g.cost_res, ZERO) >= cost and \
             (amount != "Max" or E.max_affordable(s, g.id, m) > 0)
-        label = f"x{k}" if amount == "Max" else f"x{amount}"
+        # fmt, not str: Buy Max can legitimately be a 300-digit number.
+        label = f"x{fmt(N(float(k)))}" if amount == "Max" else f"x{amount}"
         w["cost"].config(text=f"{fmt(cost)} {G.RES_BY_ID[g.cost_res].name}",
                          fg=FG if affordable else DIM)
         w["btn"].config(text=f"Buy {label}",
@@ -2137,7 +2138,7 @@ class App:
             f"This run            {fmt_time(s.run_time())}",
             f"Sessions            {st.get('sessions', 0)}",
             "",
-            f"Machines bought     {st.get('gens_bought', 0):,}",
+            f"Machines bought     {fmt(Num.from_json(st.get('gens_bought', 0)))}",
             f"Upgrades bought     {st.get('upgrades_bought', 0):,}",
             f"Research completed  {st.get('research_bought', 0):,}",
             "",

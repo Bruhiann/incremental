@@ -19,10 +19,19 @@ ACH_BY_ID = {a.id: a for a in G.ACHIEVEMENTS}
 TARGET_BY_ID = {t.id: t for t in G.TARGETS}
 
 # Cap on a single purchase call. The maths is closed-form, so a large count
-# costs no more to compute than a small one -- the cap exists only to keep
-# counts sane. A million is far too low once a player can afford a billion
-# units at a time, which throttles auto-buy to a crawl for no reason.
-MAX_BUY = 10**15
+# costs no more to compute than a small one; this bound exists only so the count
+# stays inside a float, since `Num.pow` takes a float exponent.
+#
+# It is NOT a design lever, and treating it as one has bitten twice. At 1e6 it
+# throttled a player who could afford 1.2 billion. At 1e15 it did something
+# worse and quieter: on a real endgame save, affordability passed the cap after
+# about five minutes and machine counts went from compounding to strictly
+# LINEAR -- +10 Qa every 25 seconds, forever, while the bank kept growing
+# hyper-exponentially. Auto-buy looked like it had stopped working. It had not;
+# it was pinned. Affordability is logarithmic in cash, so any fixed cap is
+# eventually crossed: this one is set at the edge of what a float can carry
+# rather than at any number that felt big at the time.
+MAX_BUY = 10**300
 AUTOBUY_CAP = 50             # floor on units a generator may auto-buy per tick
 # ...but a flat floor is glacial once you can afford a million levels a tick, so
 # the real allowance is a share of what you could buy outright. Taking a share
@@ -424,11 +433,16 @@ def _levels_from_ratio(ratio_log: float, growth: float) -> int:
     if log_g <= 0:
         return MAX_BUY
     if ratio_log > 280:
-        k = math.floor((ratio_log + math.log10(growth - 1.0)) / log_g)
+        k = (ratio_log + math.log10(growth - 1.0)) / log_g
     else:
         ratio = 10.0**ratio_log
-        k = math.floor(math.log(1.0 + ratio * (growth - 1.0)) / math.log(growth))
-    return max(0, min(MAX_BUY, int(k)))
+        k = math.log(1.0 + ratio * (growth - 1.0)) / math.log(growth)
+    # Guarded before the int(): math.floor(inf) raises, and a ratio_log large
+    # enough to overflow the division is reachable now that the cap is at the
+    # float ceiling rather than well below it.
+    if not math.isfinite(k):
+        return MAX_BUY
+    return max(0, min(MAX_BUY, int(math.floor(k))))
 
 
 def growth_of(s: GameState, g: G.Gen, m: Mults | None = None) -> float:
@@ -490,7 +504,10 @@ def buy(s: GameState, gid: str, amount, m: Mults | None = None) -> int:
     s.res[g.cost_res] = (cash - cost).clamp_min(0)
     s.bought[gid] = s.bought.get(gid, ZERO) + k
     s.gens[gid] = s.gens.get(gid, ZERO) + k
-    s.stats["gens_bought"] = s.stats.get("gens_bought", 0) + k
+    # Held as a Num: with the cap at the float ceiling this can legitimately
+    # reach counts a Python int would carry as a 300-digit number in the save.
+    s.stats["gens_bought"] = (
+        Num.from_json(s.stats.get("gens_bought", 0)) + Num(float(k))).to_json()
     return k
 
 
@@ -548,8 +565,13 @@ def bulk_affordable(base: float, growth: float, level: int, cash: Num) -> int:
     if growth <= FLAT:
         # int(inf) raises, and a flat-priced node plus an astronomical bank
         # reaches infinity easily. Decide in log space first.
+        #
+        # The count still has to be one the cash actually covers: this branch
+        # used to hand back MAX_BUY outright, which was harmless only because
+        # MAX_BUY was small. At the float ceiling it promises 1e300 levels for
+        # 1e50 of cash, and `buy` would then price them and refuse.
         ratio = cash / first
-        if ratio.log10() > 12:
+        if ratio.log10() > 300:
             return MAX_BUY
         return max(0, min(MAX_BUY, int(ratio.to_float())))
     return _levels_from_ratio(cash.log10() - first.log10(), growth)

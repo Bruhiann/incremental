@@ -1650,3 +1650,82 @@ class TestTenfoldAtScale(unittest.TestCase):
         self.assertTrue(any("Every 10 owned" in lbl for lbl in labels),
                         "the per-10 bonus disappeared after a large purchase")
         self.assertGreater(s.mults["E1"], N(1))
+
+
+class TestAutoBuyDoesNotGoLinear(unittest.TestCase):
+    """MAX_BUY has pinned a real save twice. This is the shape of the symptom.
+
+    Machine counts must keep compounding while the bank compounds. When the cap
+    binds, growth silently changes character -- counts rise by a fixed number
+    per tick instead of a fixed ratio -- and auto-buy looks broken while working
+    exactly as written.
+    """
+
+    def _rich(self):
+        s = new_game()
+        s.p1_count, s.p2_count, s.p3_count = 500, 60, 10
+        s.perm_flags.add("autobuy")
+        s.auto["enabled"] = True
+        for g in G.GENERATORS:
+            s.auto["gens"][g.id] = True
+        for gid in ("E1", "E2", "E3", "E4", "E5", "R1", "R2"):
+            s.unlocked.add(gid)
+            s.gens[gid] = s.bought[gid] = N(1e5)
+        # Num.from_exp, not N(1e14000): a float literal that large is inf, and
+        # the resulting bank is smaller than the prices it is meant to dwarf.
+        for rid in ("ore", "alloy", "data", "isotope"):
+            s.res[rid] = Num.from_exp(1e14)
+        E.recompute(s)
+        return s
+
+    def test_max_affordable_is_not_pinned_at_the_cap(self):
+        s = self._rich()
+        afford = E.max_affordable(s, "E1")
+        self.assertLess(afford, E.MAX_BUY,
+                        "affordability is pinned at the cap, not at the price")
+        self.assertGreater(afford, 0)
+
+    def test_affordability_tracks_the_bank_instead_of_flatlining(self):
+        """The precise signature of a pinned cap.
+
+        Affordability is logarithmic in cash, so a bank ten orders richer must
+        buy measurably more levels. Under a binding cap every one of these
+        returns the same number, which is what turns compounding growth into
+        +N per tick forever.
+        """
+        counts = []
+        for exponent in (1e13, 2e13, 4e13, 8e13):
+            s = self._rich()
+            s.res["ore"] = Num.from_exp(exponent)
+            E.recompute(s)
+            counts.append(E.max_affordable(s, "E1"))
+        for earlier, later in zip(counts, counts[1:]):
+            self.assertGreater(later, earlier,
+                               f"affordability is flat across banks: {counts}")
+        self.assertLess(max(counts), E.MAX_BUY)
+
+    def test_autobuy_allowance_tracks_affordability(self):
+        s = self._rich()
+        m = E.recompute(s)
+        afford = E.max_affordable(s, "E1", m)
+        take = E._autobuy_amount(s, "E1", m)
+        self.assertGreater(take, E.AUTOBUY_CAP,
+                           "auto-buy is taking its floor, not its share")
+        self.assertAlmostEqual(take / afford, E.AUTOBUY_FRACTION, places=3)
+
+    def test_a_huge_purchase_actually_goes_through(self):
+        """The closed form has to survive counts far past 1e15."""
+        s = self._rich()
+        k = E.max_affordable(s, "E1")
+        self.assertGreater(k, 10**15, "not testing the interesting range")
+        before = s.bought["E1"]
+        got = E.buy(s, "E1", k)
+        self.assertGreater(got, 10**15)
+        self.assertGreaterEqual(s.res["ore"], ZERO)
+        self.assertEqual(s.bought["E1"] - before, N(float(got)))
+
+    def test_the_machines_bought_stat_survives_astronomical_counts(self):
+        s = self._rich()
+        E.buy(s, "E1", E.max_affordable(s, "E1"))
+        self.assertGreater(Num.from_json(s.stats["gens_bought"]), ZERO)
+        GameState.from_dict(s.to_dict())        # must round-trip, not explode

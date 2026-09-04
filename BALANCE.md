@@ -907,3 +907,69 @@ that stopped dead at E10 and R5, and Standing Recursion Orders.
 milestone that used them on a brand new game. The guard test now derives its
 field list from `dataclasses.fields(G.Cond)`, so `Cond.recurse` could not repeat
 it. Verified by deleting the check and watching the test fail.
+
+---
+
+# MAX_BUY, the third time
+
+Reported as "is auto buy working or is it just slow — too many products get
+loaded and I don't see the number going down."
+
+Auto-buy was working. Measured on the reporting save, one tick bought 17.7K
+Regolith Scrapers, 13.2K Solar Films and thousands of every other tier including
+the whole Defence ladder, with every per-machine toggle on and no reserves set.
+Spending was 0.00% of income over sixty seconds, which is the honest answer to
+the second half of the question: affordability is *logarithmic* in cash, so at
+this scale no amount of buying can visibly dent the bank, and it never will.
+
+But the first half was right, and the cause was `MAX_BUY`.
+
+```
+        E1 bought      still affordable
+  0s         882K               156,000
+300s        7.46Qa    1,000,000,000,000,000   <- exactly MAX_BUY
+675s         157Qa    1,000,000,000,000,000
+700s         167Qa    ...
+725s         177Qa
+```
+
+After about five minutes of play, affordability crossed the cap and growth
+**changed character**: from compounding to strictly linear, +10 Qa every 25
+seconds forever, while the bank kept growing hyper-exponentially. The ratio
+decayed 1.07x -> 1.03x -> and would have kept decaying toward 1.00x. Nothing
+errored. Auto-buy simply looked broken while doing exactly what it was told.
+
+This is the same cap that was raised from 1e6 to 1e15 once already, for the same
+reason, on the same save. **A fixed integer cap is the wrong shape** in a game
+whose counts are `Num`: affordability is logarithmic in cash and cash is
+hyper-exponential, so every finite cap is eventually crossed, and crossing it is
+silent.
+
+*Fix:* `MAX_BUY = 10**300`, set at the edge of what a float can carry rather
+than at a number that felt large, with the reasoning written at the constant so
+the next person does not pick a fresh round number. `_levels_from_ratio` now
+guards `math.isfinite` before `int()`, since a division that overflows is
+reachable at this ceiling. `gens_bought` moved to a `Num`, and Buy Max labels
+and the Stats row now format through `fmt` — a 300-digit integer is not a button
+caption.
+
+Measured on the same save, same twenty minutes:
+
+| | machine count at 20 min | growth per 25 s |
+|---|---|---|
+| before | 3.67e17 | x1.03, linear |
+| after | 3.72e149 | x98,006, compounding |
+
+## A second bug the cap was hiding
+
+Raising it broke an existing test, which is what tests are for.
+`bulk_affordable` short-circuited flat-priced shop nodes (`cost_growth == 1.0`)
+to `MAX_BUY` whenever the cash-to-price ratio passed 1e12 — harmless while
+MAX_BUY was small, but at the float ceiling it promised 1e300 levels for 1e50 of
+cash, and `buy` would price them and refuse. The threshold now matches the cap.
+
+Four regression tests pin the symptom rather than the constant: affordability
+must rise with the bank, the auto-buy allowance must track affordability rather
+than its floor, a purchase past 1e15 must go through, and the machines-bought
+stat must survive a save round-trip. All four fail if the cap is put back to
+1e15, which is how they were checked.
